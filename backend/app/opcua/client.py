@@ -7,9 +7,13 @@ class OPCUAClient:
         self.client = None
 
     async def connect(self):
+        """
+        Connect to the PLC's OPC UA Server.
+        The PLC acts as the server, and this backend application acts as the client.
+        """
         # self.client = Client(url=self.url)
         # await self.client.connect()
-        print(f"Connecting to OPC UA at {self.url}")
+        print(f"Connecting to OPC UA Server (PLC) at {self.url}")
         pass
 
     async def disconnect(self):
