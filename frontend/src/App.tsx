@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -51,39 +51,42 @@ function Indicator({ label, ok, warn = false }: { label: string; ok: boolean; wa
 }
 
 // =========================================================
-// Telemetry (mock)
+// Telemetry (live from backend)
 // =========================================================
 function useTelemetry() {
-  const [t, setT] = useState(0);
+  const [data, setData] = useState<any[]>([]);
+
   useEffect(() => {
-    const id = setInterval(() => setT((v) => v + 1), 1200);
+    // Poll backend every 1000ms
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch("/api/telemetry");
+        if (!res.ok) throw new Error("Failed to fetch");
+        const point = await res.json();
+
+        setData((prev) => {
+          // Keep last 40 points
+          const newData = [...prev, point];
+          if (newData.length > 40) newData.shift();
+          return newData;
+        });
+      } catch (err) {
+        console.error("Telemetry fetch error:", err);
+      }
+    }, 1000);
     return () => clearInterval(id);
   }, []);
-  const data = useMemo(() => {
-    const len = 40;
-    return Array.from({ length: len }, (_, i) => {
-      const x = t - (len - i);
-      return {
-        time: x,
-        ionV: 4.5 + Math.sin((x / 6) * Math.PI) * 0.6,
-        ionI: 1.8 + Math.cos((x / 8) * Math.PI) * 0.4,
-        heatV: 7.0 + Math.sin((x / 5) * Math.PI) * 0.8,
-        heatI: 3.2 + Math.cos((x / 7) * Math.PI) * 0.5,
-        heLvl: 68 + Math.sin((x / 10) * Math.PI) * 6,
-        Thot: 62 + Math.sin((x / 9) * Math.PI) * 3,
-        Tcold: 28 + Math.cos((x / 9) * Math.PI) * 3,
-      };
-    });
-  }, [t]);
-  const latest = data[data.length - 1];
+
+  const latest = data[data.length - 1] || {
+    time: 0, ionV: 0, ionI: 0, heatV: 0, heatI: 0, heLvl: 0, Thot: 0, Tcold: 0
+  };
   return { data, latest };
 }
 
 // =========================================================
 // Sections
 // =========================================================
-function Dashboard({ cpsOn, apsOn, faults }: { cpsOn: boolean; apsOn: boolean; faults: string[] }) {
-  const { data, latest } = useTelemetry();
+function Dashboard({ cpsOn, apsOn, faults, data, latest }: { cpsOn: boolean; apsOn: boolean; faults: string[], data: any[], latest: any }) {
   const ok = faults.length === 0;
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -304,8 +307,7 @@ function SafetyTab() {
   );
 }
 
-function MonitoringTab() {
-  const { data, latest } = useTelemetry();
+function MonitoringTab({ data, latest }: { data: any[], latest: any }) {
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
       <Card className="rounded-2xl xl:col-span-2">
@@ -469,6 +471,7 @@ export default function GyrotronAdamDashboard() {
   const [cpsOn] = useState(true);
   const [apsOn] = useState(false);
   const faults: string[] = [];
+  const { data, latest } = useTelemetry();
 
   function goTo(tabName: string, id?: string) {
     setTab(tabName);
@@ -515,9 +518,9 @@ export default function GyrotronAdamDashboard() {
             <TabsTrigger value="logs">Logs</TabsTrigger>
           </TabsList>
           <div className="mt-6" />
-          <TabsContent value="dashboard"><Dashboard cpsOn={cpsOn} apsOn={apsOn} faults={faults} /></TabsContent>
+          <TabsContent value="dashboard"><Dashboard cpsOn={cpsOn} apsOn={apsOn} faults={faults} data={data} latest={latest} /></TabsContent>
           <TabsContent value="power"><PowerTab /></TabsContent>
-          <TabsContent value="monitoring"><MonitoringTab /></TabsContent>
+          <TabsContent value="monitoring"><MonitoringTab data={data} latest={latest} /></TabsContent>
           <TabsContent value="flow"><PowerFlowTab /></TabsContent>
           <TabsContent value="safety"><SafetyTab /></TabsContent>
           <TabsContent value="startup"><StartupWizard goTo={goTo} /></TabsContent>
