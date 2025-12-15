@@ -337,89 +337,16 @@ function MonitoringTab() {
 }
 
 function PowerFlowTab() {
-  // Simple SVG power flow diagram (mock wiring)
   return (
     <Card className="rounded-2xl">
       <CardHeader className="pb-2"><CardTitle className="text-base">Power Flow</CardTitle></CardHeader>
       <CardContent>
-        <div className="w-full overflow-auto rounded-xl border bg-white">
-          <svg viewBox="0 0 1200 520" className="min-w-[900px] h-[520px]">
-            <g transform="translate(880,20)">
-              <rect x="0" y="0" width="300" height="110" rx="14" fill="#f8fafc" stroke="#cbd5e1" />
-              <text x="16" y="26" fontSize="14" fontWeight="600" fill="#0f172a">Legend</text>
-              <circle cx="24" cy="48" r="6" fill="#10b981" /><text x="40" y="52" fontSize="12" fill="#334155">Energized / ON</text>
-              <circle cx="24" cy="72" r="6" fill="#f59e0b" /><text x="40" y="76" fontSize="12" fill="#334155">Standby / Control</text>
-              <circle cx="24" cy="96" r="6" fill="#ef4444" /><text x="40" y="100" fontSize="12" fill="#334155">Fault / Tripped</text>
-            </g>
-            <defs>
-              <marker id="arrow" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
-              </marker>
-            </defs>
-            <g transform="translate(40,40)">
-              <rect width="160" height="64" rx="12" fill="#e2e8f0" stroke="#94a3b8" />
-              <text x="80" y="38" textAnchor="middle" fontSize="14" fontWeight="600" fill="#0f172a">Mains</text>
-              <text x="80" y="56" textAnchor="middle" fontSize="11" fill="#334155">3ϕ AC</text>
-            </g>
-            <line x1="200" y1="72" x2="300" y2="72" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
-            <g transform="translate(300,20)">
-              <rect width="220" height="100" rx="14" fill="#dcfce7" stroke="#16a34a" />
-              <text x="110" y="40" textAnchor="middle" fontSize="14" fontWeight="600" fill="#065f46">HV Converters</text>
-              <text x="85" y="66" fontSize="12" fill="#065f46">CPS Rectifier</text>
-              <text x="150" y="86" fontSize="12" fill="#065f46">APS Rectifier</text>
-            </g>
-            <g transform="translate(590,20)">
-              <rect width="220" height="100" rx="14" fill="#dcfce7" stroke="#16a34a" />
-              <text x="110" y="40" textAnchor="middle" fontSize="14" fontWeight="600" fill="#065f46">CPS (Cathode)</text>
-              <text x="110" y="64" textAnchor="middle" fontSize="12" fill="#065f46">−HV to cathode</text>
-              <text x="110" y="84" textAnchor="middle" fontSize="12" fill="#065f46">Converter / Rectifier</text>
-            </g>
-            <g transform="translate(590,150)">
-              <rect width="220" height="100" rx="14" fill="#dcfce7" stroke="#16a34a" />
-              <text x="110" y="40" textAnchor="middle" fontSize="14" fontWeight="600" fill="#065f46">APS (Anode)</text>
-              <text x="110" y="64" textAnchor="middle" fontSize="12" fill="#065f46">+kV shaping</text>
-              <text x="110" y="84" textAnchor="middle" fontSize="12" fill="#065f46">Converter / Rectifier</text>
-            </g>
-            <g transform="translate(860,90)">
-              <rect width="250" height="120" rx="16" fill="#e0f2fe" stroke="#38bdf8" />
-              <text x="125" y="44" textAnchor="middle" fontSize="14" fontWeight="600" fill="#0c4a6e">Gyrotron Interaction Region</text>
-              <text x="125" y="68" textAnchor="middle" fontSize="12" fill="#0c4a6e">Electron beam + magnetic field</text>
-              <text x="125" y="88" textAnchor="middle" fontSize="12" fill="#0c4a6e">→ mm-wave output</text>
-            </g>
-            <line x1="520" y1="70" x2="590" y2="70" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
-            <line x1="520" y1="170" x2="590" y2="170" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
-            <line x1="810" y1="70" x2="860" y2="120" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
-            <line x1="810" y1="200" x2="860" y2="160" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
-            <g transform="translate(300,260)">
-              <rect width="220" height="80" rx="14" fill="#fef3c7" stroke="#f59e0b" />
-              <text x="110" y="34" textAnchor="middle" fontSize="14" fontWeight="600" fill="#7c2d12">Magnet PS (CMPS)</text>
-              <text x="110" y="56" textAnchor="middle" fontSize="12" fill="#7c2d12">Superconducting / Resistive</text>
-            </g>
-            <line x1="520" y1="300" x2="860" y2="150" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
-            <g transform="translate(40,150)">
-              <rect width="220" height="80" rx="14" fill="#fef3c7" stroke="#f59e0b" />
-              <text x="110" y="34" textAnchor="middle" fontSize="14" fontWeight="600" fill="#7c2d12">Filament / Heater</text>
-              <text x="110" y="56" textAnchor="middle" fontSize="12" fill="#7c2d12">Cathode emission</text>
-            </g>
-            <line x1="260" y1="190" x2="590" y2="70" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
-            <g transform="translate(40,260)">
-              <rect width="220" height="80" rx="14" fill="#fef3c7" stroke="#f59e0b" />
-              <text x="110" y="34" textAnchor="middle" fontSize="14" fontWeight="600" fill="#7c2d12">Ion Pump PS (IPPS)</text>
-              <text x="110" y="56" textAnchor="middle" fontSize="12" fill="#7c2d12">Vacuum maintenance</text>
-            </g>
-            <line x1="260" y1="300" x2="880" y2="120" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
-            <g transform="translate(300,360)">
-              <rect width="780" height="120" rx="16" fill="#f1f5f9" stroke="#94a3b8" />
-              <text x="390" y="24" textAnchor="middle" fontSize="14" fontWeight="600" fill="#0f172a">Control & Instrumentation (ADAM-5000E)</text>
-              <text x="100" y="50" fontSize="12" fill="#334155">5052: States / Interlocks</text>
-              <text x="320" y="50" fontSize="12" fill="#334155">5068/5069: Commands</text>
-              <text x="520" y="50" fontSize="12" fill="#334155">5024: Analog Setpoints</text>
-              <text x="720" y="50" fontSize="12" fill="#334155">5017/5013: Measurements</text>
-            </g>
-            <line x1="690" y1="360" x2="700" y2="120" stroke="#64748b" strokeWidth="1.8" markerEnd="url(#arrow)" />
-            <line x1="840" y1="360" x2="860" y2="150" stroke="#64748b" strokeWidth="1.8" markerEnd="url(#arrow)" />
-            <line x1="520" y1="360" x2="520" y2="120" stroke="#64748b" strokeWidth="1.8" markerEnd="url(#arrow)" />
-          </svg>
+        <div className="w-full overflow-hidden rounded-xl border bg-white">
+          <img
+            src="/power_flow.png"
+            alt="Gyrotron Control Architecture Power Flow"
+            className="w-full h-auto object-contain"
+          />
         </div>
       </CardContent>
     </Card>
