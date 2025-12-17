@@ -387,6 +387,8 @@ function StartupWizard({ goTo }: { goTo: (tab: string, id?: string) => void }) {
   }
   const canNext = done[step.key] || i === STARTUP_STEPS.length - 1;
 
+  const canMarkDone = i === 0 || done[STARTUP_STEPS[i - 1].key];
+
   return (
     <Card className="rounded-2xl">
       <CardHeader className="pb-2"><CardTitle className="text-base">Startup Sequencer</CardTitle></CardHeader>
@@ -413,7 +415,7 @@ function StartupWizard({ goTo }: { goTo: (tab: string, id?: string) => void }) {
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={focusTarget}>Go to control</Button>
-                  <Button variant="secondary" onClick={markDone}>Mark done</Button>
+                  <Button variant="secondary" onClick={markDone} disabled={!canMarkDone}>Mark done</Button>
                 </div>
               </div>
               <p className="text-sm text-slate-600">{step.desc}</p>
