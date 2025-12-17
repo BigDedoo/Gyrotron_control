@@ -15,14 +15,20 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+from app.core.auth import authenticate_user
+from fastapi import HTTPException
+
 @router.post("/login")
 async def login(creds: LoginRequest):
-    # Mock authentication: accept anything
-    return {
-        "token": "mock-jwt-token-xyz-123",
-        "username": creds.username,
-        "role": "operator"
-    }
+    if authenticate_user(creds.username, creds.password):
+        # Return a simple token and role
+        return {
+            "token": "real-ldap-session-token",
+            "username": creds.username,
+            "role": "operator"
+        }
+    else:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @router.get("/telemetry")
 async def get_telemetry():
