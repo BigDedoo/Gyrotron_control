@@ -468,12 +468,33 @@ function LogsTab() {
 // =========================================================
 // Root
 // =========================================================
+import Login from "@/components/Login";
+
 export default function GyrotronAdamDashboard() {
+  // Auth state
+  const [user, setUser] = useState<string | null>(() => {
+    return localStorage.getItem("gyro_user");
+  });
+
   const [tab, setTab] = useState("dashboard");
   const [cpsOn] = useState(true);
   const [apsOn] = useState(false);
   const faults: string[] = [];
   const { data, latest } = useTelemetry();
+
+  function handleLogin(username: string) {
+    localStorage.setItem("gyro_user", username);
+    setUser(username);
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("gyro_user");
+    setUser(null);
+  }
+
+  if (!user) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   function goTo(tabName: string, id?: string) {
     setTab(tabName);
@@ -501,9 +522,17 @@ export default function GyrotronAdamDashboard() {
               <div className="text-xs text-muted-foreground">ADAM-5000E • CPS / APS / Interlocks</div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <StatusDot ok={faults.length === 0} />
-            <span className="text-sm">{faults.length === 0 ? "Nominal" : "Fault"}</span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <StatusDot ok={faults.length === 0} />
+              <span className="text-sm">{faults.length === 0 ? "Nominal" : "Fault"}</span>
+            </div>
+            <div className="flex items-center gap-2 border-l pl-4">
+              <span className="text-sm font-medium text-slate-600">{user}</span>
+              <Button variant="ghost" size="sm" onClick={handleLogout} className="h-8 text-xs text-muted-foreground hover:text-red-600">
+                Sign out
+              </Button>
+            </div>
           </div>
         </div>
       </header>

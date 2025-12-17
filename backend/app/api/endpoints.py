@@ -9,6 +9,21 @@ router = APIRouter()
 # Simple mock state
 start_time = time.time()
 
+from pydantic import BaseModel
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@router.post("/login")
+async def login(creds: LoginRequest):
+    # Mock authentication: accept anything
+    return {
+        "token": "mock-jwt-token-xyz-123",
+        "username": creds.username,
+        "role": "operator"
+    }
+
 @router.get("/telemetry")
 async def get_telemetry():
     # Simulate time "t" as integer steps since server start (similar to frontend behavior)
