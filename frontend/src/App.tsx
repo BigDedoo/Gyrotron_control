@@ -347,7 +347,7 @@ function PowerFlowTab() {
           <img
             src="/power_flow.png"
             alt="Gyrotron Control Architecture Power Flow"
-            className="w-full h-auto object-contain"
+            className="max-w-full max-h-[75vh] mx-auto object-contain"
           />
         </div>
       </CardContent>
