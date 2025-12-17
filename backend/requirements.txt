@@ -1,5 +1,7 @@
 fastapi
 uvicorn
 pydantic
+ldap3
+
 asyncua
 python-dotenv
