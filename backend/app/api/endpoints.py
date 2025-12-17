@@ -18,17 +18,44 @@ class LoginRequest(BaseModel):
 from app.core.auth import authenticate_user
 from fastapi import HTTPException
 
+from app.core.auth import authenticate_user
+from app.core.users import user_manager
+from fastapi import HTTPException
+from pydantic import BaseModel
+
+class UserAction(BaseModel):
+    username: str
+
 @router.post("/login")
 async def login(creds: LoginRequest):
+    # 1. Verify credentials with LDAP
     if authenticate_user(creds.username, creds.password):
+        # 2. Check whitelist
+        if not user_manager.is_allowed(creds.username):
+             raise HTTPException(status_code=403, detail="Access denied. User not authorized.")
+             
         # Return a simple token and role
         return {
             "token": "real-ldap-session-token",
             "username": creds.username,
-            "role": "operator"
+            "role": "admin" # Giving everyone admin for now as requested
         }
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+@router.get("/users")
+async def get_users():
+    return user_manager.get_users()
+
+@router.post("/users/add")
+async def add_user(action: UserAction):
+    user_manager.add_user(action.username)
+    return {"status": "ok", "users": user_manager.get_users()}
+
+@router.post("/users/remove")
+async def remove_user(action: UserAction):
+    user_manager.remove_user(action.username)
+    return {"status": "ok", "users": user_manager.get_users()}
 
 @router.get("/telemetry")
 async def get_telemetry():

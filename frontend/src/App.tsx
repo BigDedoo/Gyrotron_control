@@ -469,6 +469,7 @@ function LogsTab() {
 // Root
 // =========================================================
 import Login from "@/components/Login";
+import AdminTab from "./components/AdminTab";
 
 export default function GyrotronAdamDashboard() {
   // Auth state
@@ -529,6 +530,9 @@ export default function GyrotronAdamDashboard() {
             </div>
             <div className="flex items-center gap-2 border-l pl-4">
               <span className="text-sm font-medium text-slate-600">{user}</span>
+              <Button variant="ghost" size="sm" onClick={() => setTab("admin")} className="h-8 text-xs text-muted-foreground hover:text-blue-600 mr-1">
+                Admin
+              </Button>
               <Button variant="ghost" size="sm" onClick={handleLogout} className="h-8 text-xs text-muted-foreground hover:text-red-600">
                 Sign out
               </Button>
@@ -556,6 +560,7 @@ export default function GyrotronAdamDashboard() {
           <TabsContent value="safety"><SafetyTab /></TabsContent>
           <TabsContent value="startup"><StartupWizard goTo={goTo} /></TabsContent>
           <TabsContent value="logs"><LogsTab /></TabsContent>
+          <TabsContent value="admin"><AdminTab /></TabsContent>
         </Tabs>
       </main>
     </div>
