@@ -25,20 +25,22 @@ from pydantic import BaseModel
 
 class UserAction(BaseModel):
     username: str
+    role: str = "user" # Default if not provided
 
 @router.post("/login")
 async def login(creds: LoginRequest):
     # 1. Verify credentials with LDAP
     if authenticate_user(creds.username, creds.password):
-        # 2. Check whitelist
-        if not user_manager.is_allowed(creds.username):
+        # 2. Check whitelist and get role
+        role = user_manager.get_role(creds.username)
+        if not role:
              raise HTTPException(status_code=403, detail="Access denied. User not authorized.")
              
         # Return a simple token and role
         return {
             "token": "real-ldap-session-token",
             "username": creds.username,
-            "role": "admin" # Giving everyone admin for now as requested
+            "role": role 
         }
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -49,7 +51,13 @@ async def get_users():
 
 @router.post("/users/add")
 async def add_user(action: UserAction):
-    user_manager.add_user(action.username)
+    # Only admins should be able to do this, but for now we trust the UI/Auth flow
+    user_manager.add_user(action.username, action.role)
+    return {"status": "ok", "users": user_manager.get_users()}
+
+@router.post("/users/update")
+async def update_user(action: UserAction):
+    user_manager.update_role(action.username, action.role)
     return {"status": "ok", "users": user_manager.get_users()}
 
 @router.post("/users/remove")

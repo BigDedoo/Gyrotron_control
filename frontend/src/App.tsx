@@ -473,8 +473,11 @@ import AdminTab from "./components/AdminTab";
 
 export default function GyrotronAdamDashboard() {
   // Auth state
-  const [user, setUser] = useState<string | null>(() => {
-    return localStorage.getItem("gyro_user");
+  const [user, setUser] = useState<{ username: string, role: string } | null>(() => {
+    const u = localStorage.getItem("gyro_user");
+    const r = localStorage.getItem("gyro_role");
+    if (u && r) return { username: u, role: r };
+    return null;
   });
 
   const [tab, setTab] = useState("dashboard");
@@ -483,13 +486,15 @@ export default function GyrotronAdamDashboard() {
   const faults: string[] = [];
   const { data, latest } = useTelemetry();
 
-  function handleLogin(username: string) {
+  function handleLogin(username: string, role: string) {
     localStorage.setItem("gyro_user", username);
-    setUser(username);
+    localStorage.setItem("gyro_role", role);
+    setUser({ username, role });
   }
 
   function handleLogout() {
     localStorage.removeItem("gyro_user");
+    localStorage.removeItem("gyro_role");
     setUser(null);
   }
 
@@ -529,10 +534,12 @@ export default function GyrotronAdamDashboard() {
               <span className="text-sm">{faults.length === 0 ? "Nominal" : "Fault"}</span>
             </div>
             <div className="flex items-center gap-2 border-l pl-4">
-              <span className="text-sm font-medium text-slate-600">{user}</span>
-              <Button variant="ghost" size="sm" onClick={() => setTab("admin")} className="h-8 text-xs text-muted-foreground hover:text-blue-600 mr-1">
-                Admin
-              </Button>
+              <span className="text-sm font-medium text-slate-600">{user.username} <span className="text-xs text-muted-foreground">({user.role})</span></span>
+              {user.role === 'admin' && (
+                <Button variant="ghost" size="sm" onClick={() => setTab("admin")} className="h-8 text-xs text-muted-foreground hover:text-blue-600 mr-1">
+                  Admin
+                </Button>
+              )}
               <Button variant="ghost" size="sm" onClick={handleLogout} className="h-8 text-xs text-muted-foreground hover:text-red-600">
                 Sign out
               </Button>

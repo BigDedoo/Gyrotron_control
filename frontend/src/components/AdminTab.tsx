@@ -5,9 +5,16 @@ import { Trash2, UserPlus, Users } from "lucide-react";
 // Assuming Card/Button are available or we simulate them.
 // To be safe and consistent with previous code I've seen, I'll use standard Tailwind elements that look like the existing design.
 
+// Define user interface for TypeScript
+interface User {
+    username: string;
+    role: string;
+}
+
 export default function AdminTab() {
-    const [users, setUsers] = useState<string[]>([]);
+    const [users, setUsers] = useState<User[]>([]); // Array of User objects
     const [newUser, setNewUser] = useState("");
+    const [newRole, setNewRole] = useState("user"); // "user" or "admin"
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
@@ -35,12 +42,13 @@ export default function AdminTab() {
             const res = await fetch("/api/users/add", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username: newUser.trim() }),
+                body: JSON.stringify({ username: newUser.trim(), role: newRole }),
             });
             if (res.ok) {
                 const data = await res.json();
                 setUsers(data.users);
                 setNewUser("");
+                setNewRole("user"); // reset logic
                 setError("");
             } else {
                 setError("Failed to add user");
@@ -77,8 +85,8 @@ export default function AdminTab() {
                         <Users size={20} />
                     </div>
                     <div>
-                        <h2 className="text-lg font-semibold">User Whitelist</h2>
-                        <p className="text-sm text-slate-500">Manage who can access the Gyrotron Control dashboard.</p>
+                        <h2 className="text-lg font-semibold">User Whitelist & Roles</h2>
+                        <p className="text-sm text-slate-500">Manage who can access the dashboard and their permissions.</p>
                     </div>
                 </div>
 
@@ -90,19 +98,32 @@ export default function AdminTab() {
                             <UserPlus className="absolute left-3 top-2.5 text-slate-400" size={16} />
                             <input
                                 type="text"
-                                placeholder="username (e.g. gemond)"
+                                placeholder="username (e.g. jdoe)"
                                 value={newUser}
                                 onChange={(e) => setNewUser(e.target.value)}
                                 className="pl-9 flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                         </div>
                     </div>
+
+                    <div className="w-32 space-y-1">
+                        <label className="text-sm font-medium text-slate-700">Role</label>
+                        <select
+                            value={newRole}
+                            onChange={(e) => setNewRole(e.target.value)}
+                            className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="user">User</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+
                     <button
                         type="submit"
                         disabled={loading || !newUser.trim()}
                         className="h-10 px-4 py-2 bg-slate-900 text-white rounded-md text-sm font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        {loading ? "Adding..." : "Add User"}
+                        {loading ? "Adding..." : "Add"}
                     </button>
                 </form>
 
@@ -114,16 +135,23 @@ export default function AdminTab() {
                         <thead className="bg-slate-50 border-b">
                             <tr>
                                 <th className="px-4 py-3 font-medium text-slate-700">Username</th>
+                                <th className="px-4 py-3 font-medium text-slate-700">Role</th>
                                 <th className="px-4 py-3 font-medium text-slate-700 w-24 text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y">
                             {users.map((u) => (
-                                <tr key={u} className="bg-white hover:bg-slate-50">
-                                    <td className="px-4 py-3 font-medium">{u}</td>
+                                <tr key={u.username} className="bg-white hover:bg-slate-50">
+                                    <td className="px-4 py-3 font-medium">{u.username}</td>
+                                    <td className="px-4 py-3">
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-800'
+                                            }`}>
+                                            {u.role}
+                                        </span>
+                                    </td>
                                     <td className="px-4 py-3 text-center">
                                         <button
-                                            onClick={() => removeUser(u)}
+                                            onClick={() => removeUser(u.username)}
                                             className="p-2 text-slate-400 hover:text-red-600 transition-colors rounded-md hover:bg-red-50"
                                             title="Remove user"
                                         >
@@ -134,7 +162,7 @@ export default function AdminTab() {
                             ))}
                             {users.length === 0 && (
                                 <tr>
-                                    <td colSpan={2} className="px-4 py-8 text-center text-slate-500">
+                                    <td colSpan={3} className="px-4 py-8 text-center text-slate-500">
                                         No users in whitelist.
                                     </td>
                                 </tr>
