@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Lock } from "lucide-react";
 
 interface LoginProps {
-    onLogin: (username: string) => void;
+    onLogin: (username: string, role: string) => void;
 }
 
 export default function Login({ onLogin }: LoginProps) {
@@ -29,7 +29,7 @@ export default function Login({ onLogin }: LoginProps) {
             if (!res.ok) throw new Error("Authentication failed");
 
             const data = await res.json();
-            onLogin(data.username);
+            onLogin(data.username, data.role);
         } catch (err) {
             setError("Invalid credentials. Please try again.");
         } finally {

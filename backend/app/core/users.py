@@ -1,33 +1,47 @@
 import json
 import os
-from typing import List
+from typing import Dict, List, Union
 
 DATA_FILE = "data/users.json"
 
 class UserManager:
     def __init__(self):
         self._ensure_data_dir()
-        self.users = self._load_users()
+        self.users: Dict[str, str] = self._load_users()
 
     def _ensure_data_dir(self):
         if not os.path.exists("data"):
             os.makedirs("data")
 
-    def _load_users(self) -> List[str]:
+    def _load_users(self) -> Dict[str, str]:
         if not os.path.exists(DATA_FILE):
-            # Default initialization to prevent lockout
-            default_users = ["gemond"]
+            # Default initialization: gemond is admin
+            default_users = {"gemond": "admin"}
             self._save_users(default_users)
             return default_users
         
         try:
             with open(DATA_FILE, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                
+            # MIGRATION: If data is a list (legacy), convert to dict
+            if isinstance(data, list):
+                print("Migrating legacy user list to RBAC dict...")
+                new_data = {}
+                for u in data:
+                    # Default everyone to 'user', force gemond to 'admin'
+                    role = "admin" if u == "gemond" else "user"
+                    new_data[u] = role
+                self._save_users(new_data)
+                return new_data
+            
+            return data
+            
         except Exception as e:
             print(f"Error loading users: {e}")
-            return ["gemond"]
+            return {"gemond": "admin"}
 
-    def _save_users(self, users: List[str]):
+    def _save_users(self, users: Dict[str, str]):
         try:
             with open(DATA_FILE, "w") as f:
                 json.dump(users, f, indent=2)
@@ -35,42 +49,44 @@ class UserManager:
             print(f"Error saving users: {e}")
 
     def is_allowed(self, username: str) -> bool:
-        # Check if username (or short username) is in the list
-        # We can be lenient: if stored is "gemond" and input is "gemond@grenoble...", we might want to check
-        # For now, simplistic exact match or "contains" logic might be needed depending on what comes from LDAP.
-        # Let's clean the username to just the 'user' part for comparison if we want to be flexible,
-        # OR force the admin to type the full thing.
-        # Let's assume we match against the 'short' login name (sAMAccountName style) or full UPN.
-        
-        # Normalize: check if exact match exists
+        # Check against simple match, UPN, or DOMAIN\user
+        return self.get_role(username) is not None
+
+    def get_role(self, username: str) -> Union[str, None]:
+        # exact match
         if username in self.users:
-            return True
-        
-        # If username is "user@domain.fr", check if "user" is in list
+            return self.users[username]
+            
+        # user@domain
         if "@" in username:
-            short_name = username.split("@")[0]
-            if short_name in self.users:
-                return True
-                
-        # If username is "DOMAIN\user", check if "user" is in list
+            short = username.split("@")[0]
+            if short in self.users:
+                return self.users[short]
+
+        # domain\user
         if "\\" in username:
-            short_name = username.split("\\")[1]
-            if short_name in self.users:
-                return True
+            short = username.split("\\")[1]
+            if short in self.users:
+                return self.users[short]
                 
-        return False
+        return None
 
-    def get_users(self) -> List[str]:
-        return self.users
+    def get_users(self) -> List[Dict[str, str]]:
+        # Return list of objects for frontend API
+        return [{"username": u, "role": r} for u, r in self.users.items()]
 
-    def add_user(self, username: str):
-        if username not in self.users:
-            self.users.append(username)
+    def add_user(self, username: str, role: str = "user"):
+        self.users[username] = role
+        self._save_users(self.users)
+
+    def update_role(self, username: str, role: str):
+        if username in self.users:
+            self.users[username] = role
             self._save_users(self.users)
 
     def remove_user(self, username: str):
         if username in self.users:
-            self.users.remove(username)
+            del self.users[username]
             self._save_users(self.users)
 
 # Singleton instance
