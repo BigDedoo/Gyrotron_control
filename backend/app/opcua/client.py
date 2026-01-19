@@ -13,7 +13,15 @@ class OPCUAClient:
         """
         # self.client = Client(url=self.url)
         # await self.client.connect()
-        print(f"Connecting to OPC UA Server (PLC) at {self.url}")
+import logging
+
+logger = logging.getLogger(__name__)
+
+class OPCUAClient:
+    def __init__(self, url="opc.tcp://localhost:4840"):
+        self.url = url
+        self.client = None
+        logger.info(f"Connecting to OPC UA Server (PLC) at {self.url}")
         pass
 
     async def disconnect(self):

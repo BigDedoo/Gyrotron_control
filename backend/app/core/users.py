@@ -1,6 +1,9 @@
 import json
 import os
+import logging
 from typing import Dict, List, Union
+
+logger = logging.getLogger(__name__)
 
 DATA_FILE = "data/users.json"
 
@@ -26,7 +29,7 @@ class UserManager:
                 
             # MIGRATION: If data is a list (legacy), convert to dict
             if isinstance(data, list):
-                print("Migrating legacy user list to RBAC dict...")
+                logger.info("Migrating legacy user list to RBAC dict...")
                 new_data = {}
                 for u in data:
                     # Default everyone to 'user', force gemond to 'admin'
@@ -38,7 +41,7 @@ class UserManager:
             return data
             
         except Exception as e:
-            print(f"Error loading users: {e}")
+            logger.error(f"Error loading users: {e}")
             return {"gemond": "admin"}
 
     def _save_users(self, users: Dict[str, str]):
@@ -46,7 +49,7 @@ class UserManager:
             with open(DATA_FILE, "w") as f:
                 json.dump(users, f, indent=2)
         except Exception as e:
-            print(f"Error saving users: {e}")
+            logger.error(f"Error saving users: {e}")
 
     def is_allowed(self, username: str) -> bool:
         # Check against simple match, UPN, or DOMAIN\user

@@ -1,8 +1,12 @@
+import os
+import logging
 from ldap3 import Server, Connection, ALL, NTLM
 
+logger = logging.getLogger(__name__)
+
 # Configuration
-LDAP_SERVER_HOST = "ccsvad05.in2p3.fr"
-LDAP_DOMAIN = "grenoble.in2p3.fr"
+LDAP_SERVER_HOST = os.getenv("LDAP_SERVER_HOST", "ccsvad05.in2p3.fr")
+LDAP_DOMAIN = os.getenv("LDAP_DOMAIN", "grenoble.in2p3.fr")
 
 def authenticate_user(username: str, password: str) -> bool:
     """
@@ -38,5 +42,5 @@ def authenticate_user(username: str, password: str) -> bool:
         conn.unbind()
         return True
     except Exception as e:
-        print(f"LDAP Authentication Failed for {user_dn}: {e}")
+        logger.error(f"LDAP Authentication Failed for {user_dn}: {e}")
         return False

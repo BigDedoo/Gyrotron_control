@@ -100,11 +100,15 @@ The application integrates safety checks at multiple levels:
 - Python 3.8+
 - Node.js 18+
 
-### standard Installation
+### Standard Installation
 1.  **Backend**:
     ```bash
     cd backend
+    # Create configuration file from example
+    cp .env.example .env
+    # Install dependencies
     pip install -r requirements.txt
+    # Run the server
     python -m uvicorn app.main:app --reload
     ```
 2.  **Frontend**:
