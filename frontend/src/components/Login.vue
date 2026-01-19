@@ -11,13 +11,29 @@ const emit = defineEmits<{
 }>()
 
 async function handleLogin() {
-  // Mock login logic
-  if (username.value && password.value) {
-    // Determine role solely based on username for demo
-    const role = username.value.toLowerCase().includes('admin') ? 'admin' : 'operator'
-    emit('login', username.value, role)
-  } else {
+  error.value = ''
+  if (!username.value || !password.value) {
     error.value = 'Please enter username and password'
+    return
+  }
+
+  try {
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username.value, password: password.value })
+    })
+
+    if (!response.ok) {
+        if (response.status === 401) throw new Error('Invalid credentials')
+        if (response.status === 403) throw new Error('Access denied')
+        throw new Error('Login failed')
+    }
+
+    const data = await response.json()
+    emit('login', data.username, data.role)
+  } catch (e: any) {
+    error.value = e.message || 'An error occurred'
   }
 }
 </script>
