@@ -9,29 +9,49 @@ The Gyrotron Control System is a full-stack web application designed to monitor 
 - **Control Layer**: The backend acts as an **OPC UA Client**, communicating with the Programmable Logic Controller (PLC) which acts as an **OPC UA Server**. This connection is used to read sensors and actuation devices (ADAM-5000E modules). *Note: PLC integration is currently mocked.*
 
 ```mermaid
-graph TD
-    subgraph Frontend_Layer ["Frontend Layer"]
-        User[Operator] -->|Inputs| UI[React UI]
-        UI -->|Displays| User
+graph LR
+    %% User Interface Layer
+    subgraph Frontend ["Frontend Layer"]
+        direction TB
+        Operator((Operator))
+        UI[React Dashboard]
+        
+        Operator <-->|Interacts| UI
     end
 
-    subgraph Backend_Layer ["Backend Layer"]
-        UI -->|HTTP GET /telemetry| API[FastAPI]
-        UI -->|HTTP POST /setpoint| API
-        API <-->|Internal| Safety[Safety Logic]
-        API -->|Command| OPC[OPC UA Client]
-        OPC -->|Status| API
+    %% Application Layer
+    subgraph Backend ["Backend Layer"]
+        direction TB
+        API[FastAPI Server]
+        Safety[Safety Logic]
+        OPC[OPC UA Client]
+
+        API <-->|Internal| Safety
+        API <-->|Commands| OPC
     end
 
-    subgraph Control_Layer ["Control Layer"]
-        OPC -->|Write Node| PLC[PLC Server]
-        PLC -->|Read Node| OPC
-        PLC -->|Analog Out| Gyrotron
-        Gyrotron -->|Analog In| PLC
+    %% Hardware Control Layer
+    subgraph Control ["Control Layer"]
+        direction TB
+        PLC[PLC Server]
+        Gyrotron[Gyrotron Device]
+        
+        PLC <-->|Analog Signal| Gyrotron
     end
+
+    %% Inter-layer Communication
+    UI <-->|HTTP / WebSocket| API
+    OPC <-->|OPC UA TCP| PLC
+
+    %% Styling
+    classDef box fill:#ffffff,stroke:#333,stroke-width:1px,rx:5,ry:5;
+    class UI,API,Safety,OPC,PLC,Gyrotron box;
+    classDef person fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
+    class Operator person;
     
-    classDef layer fill:#f9f9f9,stroke:#333,stroke-width:2px;
-    class Frontend_Layer,Backend_Layer,Control_Layer layer
+    style Frontend fill:#f8f9fa,stroke:#dee2e6,stroke-width:2px
+    style Backend fill:#f8f9fa,stroke:#dee2e6,stroke-width:2px
+    style Control fill:#f8f9fa,stroke:#dee2e6,stroke-width:2px
 ```
 
 ## 2. Backend API & Core Logic
