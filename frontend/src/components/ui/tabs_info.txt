@@ -1,0 +1,11 @@
+<script setup lang="ts">
+import { TabsRoot, TabsList, TabsTrigger, TabsContent } from 'radix-vue'
+// We will export wrapper components or just use them directly in views.
+// To simpler porting, let's just mirror the exports or usages.
+// Since Vue SFCs are not named exports like React components, we will create separate files for parts if needed,
+// but for Tabs, it is often easier to use the primitives directly or wrap them in this single file?
+// Actually, standard practice in Vue is to just use the Radix primitives or wrap them if we want shared styles.
+// Let's create wrappers in this file and export them? No, Vue SFC is one component per file usually.
+// So we will create: Tabs.vue (Root), TabsList.vue, TabsTrigger.vue, TabsContent.vue
+</script>
+<template><div>Use separate files</div></template>

@@ -4,7 +4,7 @@
 
 The Gyrotron Control System is a full-stack web application designed to monitor and control high-power gyrotron devices. It follows a client-server architecture with a clear separation of concerns:
 
-- **Frontend**: A React-based Single Page Application (SPA) providing a modern, responsive user interface for operators. It handles real-time data visualization, control inputs, and operational workflows.
+- **Frontend**: A Vue.js (v3) Single Page Application (SPA) providing a modern, responsive user interface for operators. It handles real-time data visualization, control inputs, and operational workflows.
 - **Backend**: A FastAPI (Python) server acting as the bridge between the user interface and the hardware control layer. It exposes a RESTful API for telemetry and control.
 - **Control Layer**: The backend acts as an **OPC UA Client**, communicating with the Programmable Logic Controller (PLC) which acts as an **OPC UA Server**. This connection is used to read sensors and actuation devices (ADAM-5000E modules). *Note: PLC integration is currently mocked.*
 
@@ -14,7 +14,7 @@ graph LR
     subgraph Frontend ["Frontend Layer"]
         direction TB
         Operator((Operator))
-        UI[React Dashboard]
+        UI[Vue Dashboard]
         
         Operator <-->|Interacts| UI
     end
@@ -87,7 +87,7 @@ This module contains critical safety logic independent of the API layer.
 
 ## 3. Frontend Application
 
-The frontend is a **Vite + React 19** application using **TypeScript**. It utilizes **Tailwind CSS** for styling and **Recharts** for data visualization.
+The frontend is a **Vite + Vue 3** application using **TypeScript**. It utilizes **Tailwind CSS** for styling, **Radix Vue** for accessible UI primitives, and **Apache ECharts** for data visualization.
 
 ### 3.1 Key Components
 - **Dashboard**: The main view displaying distinct gauge cards for critical metrics (Ion Pump, Heater, Cryo) and live area/line charts for voltage and current trends.
@@ -103,8 +103,8 @@ The frontend is a **Vite + React 19** application using **TypeScript**. It utili
 - **Safety Monitor**: Real-time status list of interlocks (Environment, Supplies, Alarms, Cryo) with visual OK/Fault indicators.
 
 ### 3.2 State Management
-- **Telemetry**: Managed via a custom hook `useTelemetry` that polls the backend and maintains a rolling buffer of the last 40 data points for charting.
-- **Startup State**: Tracks the completion status of each step in the startup sequence to prevent out-of-order operations.
+- **Telemetry**: Managed via a composable `useTelemetry` that polls the backend and maintains a rolling buffer of data points.
+- **Startup State**: Tracks the completion status of each step locally within the Wizard view (can be moved to Pinia if global persistence is needed).
 
 ## 4. Safety Protocols
 
@@ -160,8 +160,9 @@ The application integrates safety checks at multiple levels:
 
 | File | Purpose |
 | :--- | :--- |
-| `main.tsx` | **Frontend Entry Point**. Bootstraps the React application and mounts it to the DOM. |
-| `App.tsx` | **Main Dashboard**. A monolithic component containing the core dashboard layout, state management (Telemetry hook, Polling), and sub-components (Dashboard, PowerTab, SafetyTab). |
-| `components/Login.tsx` | **Authentication View**. Provides the login form for user session initiation via the backend API. |
-| `components/AdminTab.tsx` | **Optimization/Admin**. Interface for administrative tasks, likely managing user roles or advanced system configuration. |
-| `lib/utils.ts` | **Utilities**. Helper functions for CSS class merging (`cn`) and other shared logic. |
+| `main.ts` | **Frontend Entry Point**. Bootstraps the Vue application and mounts it to the DOM. |
+| `App.vue` | **Main Layout**. Orchestrates the Tabs system and global layout. |
+| `views/DashboardView.vue` | **Dashboard**. Main monitoring dashboard with ECharts visualization. |
+| `views/StartupWizardView.vue` | **Startup Logic**. Implements the step-by-step startup procedure. |
+| `components/ui/` | **UI Library**. Contains reusable Radix Vue primitives (e.g. `Button.vue`, `Card.vue`). |
+| `composables/useTelemetry.ts` | **Telemetry Logic**. Shared composable for polling backend data. |
