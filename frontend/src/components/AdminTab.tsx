@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { Trash2, UserPlus, Users } from "lucide-react";
 
-// Minimal UI components (inline or imported if available, but for safety using Tailwind directly for layout)
-// Assuming Card/Button are available or we simulate them.
-// To be safe and consistent with previous code I've seen, I'll use standard Tailwind elements that look like the existing design.
+
 
 // Define user interface for TypeScript
 interface User {
