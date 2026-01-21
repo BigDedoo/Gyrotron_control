@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Card, CardHeader, CardTitle, CardContent, Button, Separator } from '@/components/ui'
+import { Card, CardHeader, CardTitle, CardContent, Separator } from '@/components/ui'
 import Indicator from '@/components/Indicator.vue'
 import { ShieldCheck, AlertTriangle } from 'lucide-vue-next'
 

@@ -2,13 +2,12 @@
 import { ref } from 'vue'
 import { Card, CardContent, CardHeader, CardTitle, Button } from '@/components/ui'
 
+import { useAuthStore } from '@/stores/auth'
+
 const username = ref('')
 const password = ref('')
 const error = ref('')
-
-const emit = defineEmits<{
-  (e: 'login', username: string, role: string): void
-}>()
+const auth = useAuthStore()
 
 async function handleLogin() {
   error.value = ''
@@ -18,20 +17,7 @@ async function handleLogin() {
   }
 
   try {
-    const response = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username.value, password: password.value })
-    })
-
-    if (!response.ok) {
-        if (response.status === 401) throw new Error('Invalid credentials')
-        if (response.status === 403) throw new Error('Access denied')
-        throw new Error('Login failed')
-    }
-
-    const data = await response.json()
-    emit('login', data.username, data.role)
+    await auth.login({ username: username.value, password: password.value })
   } catch (e: any) {
     error.value = e.message || 'An error occurred'
   }

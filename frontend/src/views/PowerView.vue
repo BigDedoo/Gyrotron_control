@@ -16,17 +16,17 @@ const apsCmd = ref({ rect: false, conv: false })
     <Card class="rounded-2xl xl:col-span-2">
       <CardHeader class="pb-2"><CardTitle class="text-base flex items-center gap-2"><Settings class="size-4" /> Setpoints</CardTitle></CardHeader>
       <CardContent class="space-y-6">
-        <Labeled :label="`Pulse duration: ${pulse[0].toFixed(2)} ms`">
+        <Labeled :label="`Pulse duration: ${pulse?.[0]?.toFixed(2) ?? '0.00'} ms`">
           <div id="setpoint-pulse">
             <Slider v-model="pulse" :min="0" :max="10" :step="0.1" />
           </div>
         </Labeled>
-        <Labeled :label="`Cathode voltage: ${vcath[0].toFixed(2)} V`">
+        <Labeled :label="`Cathode voltage: ${vcath?.[0]?.toFixed(2) ?? '0.00'} V`">
           <div id="setpoint-cathode">
             <Slider v-model="vcath" :min="0" :max="10" :step="0.1" />
           </div>
         </Labeled>
-        <Labeled :label="`Anode voltage: ${vanode[0].toFixed(2)} V`">
+        <Labeled :label="`Anode voltage: ${vanode?.[0]?.toFixed(2) ?? '0.00'} V`">
           <div id="setpoint-anode">
             <Slider v-model="vanode" :min="0" :max="10" :step="0.1" />
           </div>

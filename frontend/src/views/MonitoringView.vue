@@ -9,7 +9,7 @@ import {
   GridComponent
 } from 'echarts/components'
 import VChart from 'vue-echarts'
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui'
 import GaugeCard from '@/components/GaugeCard.vue'
 import { Gauge, Thermometer } from 'lucide-vue-next'

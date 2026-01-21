@@ -13,31 +13,14 @@ import LogsView from '@/views/LogsView.vue'
 import AdminView from '@/views/AdminView.vue'
 import { useTelemetry } from '@/composables/useTelemetry'
 
-// Auth state
-const user = ref<{ username: string, role: string } | null>(() => {
-  const u = localStorage.getItem("gyro_user")
-  const r = localStorage.getItem("gyro_role")
-  if (u && r) return { username: u, role: r }
-  return null
-})
+import { useAuthStore } from '@/stores/auth'
 
+const auth = useAuthStore()
 const tab = ref("dashboard")
 const cpsOn = ref(true)
 const apsOn = ref(false)
 const faults = ref<string[]>([])
 const { data, latest } = useTelemetry()
-
-function handleLogin(username: string, role: string) {
-  localStorage.setItem("gyro_user", username)
-  localStorage.setItem("gyro_role", role)
-  user.value = { username, role }
-}
-
-function handleLogout() {
-  localStorage.removeItem("gyro_user")
-  localStorage.removeItem("gyro_role")
-  user.value = null
-}
 
 function goTo(tabName: string, id?: string) {
   tab.value = tabName
@@ -55,15 +38,15 @@ function goTo(tabName: string, id?: string) {
 </script>
 
 <template>
-  <div v-if="!user" class="min-h-screen bg-slate-50">
-     <Login @login="handleLogin" />
+  <div v-if="!auth.user" class="min-h-screen bg-slate-50">
+     <Login />
   </div>
 
   <div v-else class="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 text-slate-900">
     <header class="sticky top-0 z-30 backdrop-blur bg-white/70 border-b">
       <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="size-8 rounded-xl bg-slate-900 text-white grid place-items-center">GT</div>
+           <div class="size-8 rounded-xl bg-slate-900 text-white grid place-items-center">GT</div>
           <div>
             <div class="font-semibold">Gyrotron Power Control <span class="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full ml-2">Vue Edition</span></div>
             <div class="text-xs text-muted-foreground">ADAM-5000E • CPS / APS / Interlocks</div>
@@ -75,11 +58,11 @@ function goTo(tabName: string, id?: string) {
             <span class="text-sm">{{ faults.length === 0 ? "Nominal" : "Fault" }}</span>
           </div>
           <div class="flex items-center gap-2 border-l pl-4">
-            <span class="text-sm font-medium text-slate-600">{{ user.username }} <span class="text-xs text-muted-foreground">({{ user.role }})</span></span>
-            <Button v-if="user.role === 'admin'" variant="ghost" size="sm" @click="tab = 'admin'" class="h-8 text-xs text-muted-foreground hover:text-blue-600 mr-1">
+            <span class="text-sm font-medium text-slate-600">{{ auth.user.username }} <span class="text-xs text-muted-foreground">({{ auth.user.role }})</span></span>
+            <Button v-if="auth.user.role === 'admin'" variant="ghost" size="sm" @click="tab = 'admin'" class="h-8 text-xs text-muted-foreground hover:text-blue-600 mr-1">
               Admin
             </Button>
-            <Button variant="ghost" size="sm" @click="handleLogout" class="h-8 text-xs text-muted-foreground hover:text-red-600">
+            <Button variant="ghost" size="sm" @click="auth.logout()" class="h-8 text-xs text-muted-foreground hover:text-red-600">
               Sign out
             </Button>
           </div>

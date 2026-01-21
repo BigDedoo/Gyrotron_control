@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui'
-import { type Component, computed } from 'vue'
+import { type Component } from 'vue'
 
 const props = defineProps<{
   title: string

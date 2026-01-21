@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { Card, CardHeader, CardTitle, CardContent, Button } from '@/components/ui'
 import { AlertTriangle } from 'lucide-vue-next'
 import { Badge } from '@/components/ui'

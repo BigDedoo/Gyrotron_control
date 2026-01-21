@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Card, CardHeader, CardTitle, CardContent, Button } from '@/components/ui'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui'
 
 const rows = [
   { t: "12:02:41", m: "CPS Rectifier ON" },
