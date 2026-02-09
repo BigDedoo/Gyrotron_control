@@ -2,7 +2,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui'
 import { type Component } from 'vue'
 
-const props = defineProps<{
+defineProps<{
   title: string
   value: number
   unit?: string

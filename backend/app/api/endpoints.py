@@ -1,27 +1,22 @@
-from fastapi import APIRouter
-from app.core import safety
-from app.opcua import client
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 import math
 import time
+import os
+
+from app.core import safety
+from app.opcua import client
+from app.core.auth import authenticate_user
+from app.core.users import user_manager
 
 router = APIRouter()
 
 # Simple mock state
 start_time = time.time()
 
-from pydantic import BaseModel
-
 class LoginRequest(BaseModel):
     username: str
     password: str
-
-from app.core.auth import authenticate_user
-from fastapi import HTTPException
-
-from app.core.auth import authenticate_user
-from app.core.users import user_manager
-from fastapi import HTTPException
-from pydantic import BaseModel
 
 class UserAction(BaseModel):
     username: str

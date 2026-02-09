@@ -56,25 +56,25 @@ const chartOption = computed(() => ({
       name: 'Ion Pump V',
       type: 'line',
       showSymbol: false,
-      data: props.data.map(d => d.ionV)
+      data: props.data.map((d) => d.ionV)
     },
     {
       name: 'Ion Pump I',
       type: 'line',
       showSymbol: false,
-      data: props.data.map(d => d.ionI)
+      data: props.data.map((d) => d.ionI)
     },
     {
       name: 'Heater V',
       type: 'line',
       showSymbol: false,
-      data: props.data.map(d => d.heatV)
+      data: props.data.map((d) => d.heatV)
     },
     {
       name: 'Heater I',
       type: 'line',
       showSymbol: false,
-      data: props.data.map(d => d.heatI)
+      data: props.data.map((d) => d.heatI)
     }
   ]
 }))
@@ -86,7 +86,7 @@ const chartOption = computed(() => ({
       <CardHeader class="pb-2"><CardTitle class="text-base">Live Trends</CardTitle></CardHeader>
       <CardContent>
         <div class="h-64">
-           <v-chart class="chart" :option="chartOption" autoresize />
+          <v-chart class="chart" :option="chartOption" autoresize />
         </div>
       </CardContent>
     </Card>

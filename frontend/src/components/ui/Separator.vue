@@ -13,10 +13,12 @@ defineProps<{
   <Separator
     :orientation="orientation"
     :decorative="decorative"
-    :class="cn(
-      'shrink-0 bg-border',
-      orientation === 'vertical' ? 'h-full w-[1px]' : 'h-[1px] w-full',
-      $props.class
-    )"
+    :class="
+      cn(
+        'shrink-0 bg-border',
+        orientation === 'vertical' ? 'h-full w-[1px]' : 'h-[1px] w-full',
+        $props.class
+      )
+    "
   />
 </template>
