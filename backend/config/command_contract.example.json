@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "purpose": "template",
+  "commands": [
+    {"command": "setpoint.apply", "target": "setpoints", "requested_value_type": "number"},
+    {"command": "cps.rectifier.set", "target": "CPS rectifier", "requested_value_type": "boolean"},
+    {"command": "cps.converter.set", "target": "CPS converter", "requested_value_type": "boolean"},
+    {"command": "aps.rectifier.set", "target": "APS rectifier", "requested_value_type": "boolean"},
+    {"command": "aps.converter.set", "target": "APS converter", "requested_value_type": "boolean"},
+    {"command": "protection.reset", "target": "protection", "requested_value_type": "none"},
+    {"command": "interlock.reset", "target": "interlocks", "requested_value_type": "none"},
+    {"command": "emergency.shutdown", "target": "emergency shutdown", "requested_value_type": "none"}
+  ]
+}

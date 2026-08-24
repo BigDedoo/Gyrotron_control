@@ -1,4 +1,8 @@
 import type {
+  AlarmSeverity,
+  CommandCapabilitiesResponse,
+  EventCategory,
+  EventListResponse,
   SessionUser,
   SystemStatus,
   TelemetryPoint,
@@ -85,6 +89,25 @@ export const api = {
 
   getSystemStatus(signal?: AbortSignal): Promise<SystemStatus> {
     return apiRequest("/status", { signal });
+  },
+
+  getEvents(options: {
+    limit?: number;
+    beforeId?: number;
+    category?: EventCategory;
+    severity?: AlarmSeverity;
+    signal?: AbortSignal;
+  } = {}): Promise<EventListResponse> {
+    const query = new URLSearchParams();
+    query.set("limit", String(options.limit ?? 50));
+    if (options.beforeId !== undefined) query.set("before_id", String(options.beforeId));
+    if (options.category) query.set("category", options.category);
+    if (options.severity) query.set("severity", options.severity);
+    return apiRequest(`/events?${query.toString()}`, { signal: options.signal });
+  },
+
+  getCommandCapabilities(signal?: AbortSignal): Promise<CommandCapabilitiesResponse> {
+    return apiRequest("/command-capabilities", { signal });
   },
 
   getUsers(): Promise<UserRecord[]> {
