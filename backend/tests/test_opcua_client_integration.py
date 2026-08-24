@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from app.models import ConnectionState, SignalQuality
+from app.models import ConnectionState, InterpretedState, SignalQuality
 from app.opcua.client import OPCUAConnectionError, ReadOnlyOPCUAClient
-from app.opcua.node_map import LogicalSignal
+from app.opcua.node_map import LogicalSignal, LogicalStateSignal, StateExpectedType
 from tests.opcua_simulator import LocalOPCUASimulator, make_opcua_settings, unused_local_port
 
 
@@ -78,6 +78,68 @@ def test_missing_and_wrong_type_nodes_are_never_good():
             assert values[LogicalSignal.HE_LEVEL].value is None
             assert values[LogicalSignal.HEAT_I].quality == SignalQuality.BAD
             assert values[LogicalSignal.HEAT_I].value is None
+        finally:
+            await client.disconnect()
+            await simulator.stop()
+
+    asyncio.run(scenario())
+
+
+def test_client_preserves_raw_state_and_applies_only_configured_interpretation():
+    async def scenario() -> None:
+        simulator = LocalOPCUASimulator()
+        await simulator.start()
+        client = ReadOnlyOPCUAClient(
+            make_opcua_settings(simulator.endpoint_url, Path(__file__))
+        )
+        try:
+            await client.connect()
+            node_map = simulator.node_map(
+                state_signals={
+                    LogicalStateSignal.GS_DOORS,
+                    LogicalStateSignal.POOR_VACUUM,
+                }
+            )
+            values = await client.read_state_signals(node_map.state_signals)
+            doors = values[LogicalStateSignal.GS_DOORS]
+            vacuum = values[LogicalStateSignal.POOR_VACUUM]
+            assert doors.raw_value is True
+            assert doors.interpreted_state == InterpretedState.OK
+            assert vacuum.raw_value is False
+            assert vacuum.interpreted_state == InterpretedState.OK
+            assert doors.source_timestamp is not None
+            assert doors.observed_at is not None
+        finally:
+            await client.disconnect()
+            await simulator.stop()
+
+    asyncio.run(scenario())
+
+
+def test_wrong_type_and_unavailable_state_nodes_are_unknown_without_affecting_others():
+    async def scenario() -> None:
+        simulator = LocalOPCUASimulator()
+        await simulator.start()
+        client = ReadOnlyOPCUAClient(
+            make_opcua_settings(simulator.endpoint_url, Path(__file__))
+        )
+        try:
+            await client.connect()
+            node_map = simulator.node_map(
+                state_signals={LogicalStateSignal.GS_DOORS, LogicalStateSignal.WATERFLOW},
+                state_missing=LogicalStateSignal.WATERFLOW,
+            )
+            wrong_type = node_map.state_signals[0].model_copy(
+                update={"expected_type": StateExpectedType.INTEGER}
+            )
+            values = await client.read_state_signals(
+                (wrong_type, node_map.state_signals[1])
+            )
+            assert values[wrong_type.signal].quality == SignalQuality.BAD
+            assert values[wrong_type.signal].interpreted_state == InterpretedState.UNKNOWN
+            unavailable = values[LogicalStateSignal.WATERFLOW]
+            assert unavailable.quality in {SignalQuality.BAD, SignalQuality.UNAVAILABLE}
+            assert unavailable.interpreted_state == InterpretedState.UNKNOWN
         finally:
             await client.disconnect()
             await simulator.stop()

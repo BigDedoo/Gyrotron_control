@@ -68,6 +68,29 @@ class ConditionState(str, Enum):
     UNKNOWN = "unknown"
 
 
+class InterpretedState(str, Enum):
+    ON = "on"
+    OFF = "off"
+    OK = "ok"
+    FAULT = "fault"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    UNKNOWN = "unknown"
+
+
+class AlarmMonitoringState(str, Enum):
+    ACTIVE = "active"
+    NO_ACTIVE = "no_active"
+    INCOMPLETE = "incomplete"
+    UNAVAILABLE = "unavailable"
+
+
+class AlarmSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
 class UserRole(str, Enum):
     USER = "user"
     ADMIN = "admin"
@@ -99,24 +122,68 @@ class ComponentStatus(BaseModel):
     rectifier: ComponentState
     converter: ComponentState
     protection: ConditionState
+    signals: dict[str, "StateSignalValue"] = Field(default_factory=dict)
+
+
+class StateSignalValue(BaseModel):
+    logical_name: str
+    display_name: str
+    group: str
+    mapped: bool
+    raw_value: bool | int | None
+    interpreted_state: InterpretedState
+    quality: SignalQuality
+    source_timestamp: datetime | None
+    observed_at: datetime | None
+    source: DataSource
+    data_state: DataState
+    severity: AlarmSeverity | None = None
 
 
 class InterlockStatus(BaseModel):
+    logical_name: str
     group: str
     name: str
     state: ConditionState
+    signal: StateSignalValue
 
 
 class AlarmStatus(BaseModel):
     code: str
     message: str
-    severity: str
+    severity: AlarmSeverity | None
     active_since: datetime | None = None
+    signal: StateSignalValue
 
 
 class AlarmSummary(BaseModel):
     state: ConditionState
+    monitoring_state: AlarmMonitoringState
     active: list[AlarmStatus]
+    signals: list[StateSignalValue]
+
+
+class MappingCoverage(BaseModel):
+    total: int = Field(ge=0)
+    mapped: int = Field(ge=0)
+    trustworthy: int = Field(ge=0)
+    complete: bool
+    missing: list[str]
+
+
+class MachineStatePoint(BaseModel):
+    timestamp: datetime
+    source: DataSource
+    sequence: int = Field(ge=0)
+    signals: dict[str, StateSignalValue]
+    coverage: MappingCoverage
+
+
+class OPCUASnapshot(BaseModel):
+    timestamp: datetime
+    sequence: int = Field(ge=0)
+    telemetry: TelemetryPoint
+    machine_state: MachineStatePoint
 
 
 class SystemStatus(BaseModel):
@@ -129,6 +196,7 @@ class SystemStatus(BaseModel):
     aps: ComponentStatus
     interlocks: list[InterlockStatus]
     alarms: AlarmSummary
+    coverage: MappingCoverage
     timestamp: datetime
     last_connection_attempt: datetime | None = None
     last_successful_read: datetime | None = None

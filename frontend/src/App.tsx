@@ -43,6 +43,7 @@ import type {
   SessionUser,
   SignalQuality,
   SignalValue,
+  StateSignalValue,
   SystemStatus,
   TelemetryPoint,
 } from "@/api/types";
@@ -66,6 +67,7 @@ const UNKNOWN_COMPONENT: ComponentStatus = {
   rectifier: "unknown",
   converter: "unknown",
   protection: "unknown",
+  signals: {},
 };
 
 
@@ -178,6 +180,29 @@ function Indicator({ label, state }: { label: string; state: DisplayState }) {
     <div className="flex items-center justify-between gap-2 text-sm">
       <span>{label}</span>
       <StateBadge state={state} />
+    </div>
+  );
+}
+
+
+function SignalDetail({ signal }: { signal: StateSignalValue | undefined }) {
+  if (!signal) return <span className="text-[11px] text-slate-500">Unmapped</span>;
+  return (
+    <div className="mt-1 flex flex-wrap items-center justify-end gap-1 text-[11px] text-slate-500">
+      {!signal.mapped && <span>Unmapped</span>}
+      <StateBadge state={signal.quality} />
+      {signal.data_state !== "live" && <StateBadge state={signal.data_state} />}
+      {signal.observed_at && <span>Observed {new Date(signal.observed_at).toLocaleTimeString()}</span>}
+    </div>
+  );
+}
+
+
+function ComponentIndicator({ label, state, signal }: { label: string; state: DisplayState; signal?: StateSignalValue }) {
+  return (
+    <div>
+      <Indicator label={label} state={state} />
+      <SignalDetail signal={signal} />
     </div>
   );
 }
@@ -336,39 +361,48 @@ function Dashboard({
           <div>
             <div className="font-medium mb-2">CPS</div>
             <div className="space-y-2">
-              <Indicator label="Overall" state={cps.state} />
-              <Indicator label="Ready" state={cps.ready} />
-              <Indicator label="Power Rectifier" state={cps.rectifier} />
-              <Indicator label="Charging Converter" state={cps.converter} />
-              <Indicator label="Protection" state={cps.protection} />
+              <ComponentIndicator label="Overall" state={cps.state} signal={cps.signals.state} />
+              <ComponentIndicator label="Ready" state={cps.ready} signal={cps.signals.ready} />
+              <ComponentIndicator label="Power Rectifier" state={cps.rectifier} signal={cps.signals.rectifier} />
+              <ComponentIndicator label="Charging Converter" state={cps.converter} signal={cps.signals.converter} />
+              <ComponentIndicator label="Protection" state={cps.protection} signal={cps.signals.protection} />
             </div>
           </div>
           <Separator />
           <div>
             <div className="font-medium mb-2">APS</div>
             <div className="space-y-2">
-              <Indicator label="Overall" state={aps.state} />
-              <Indicator label="Ready" state={aps.ready} />
-              <Indicator label="Power Rectifier" state={aps.rectifier} />
-              <Indicator label="Charging Converter" state={aps.converter} />
-              <Indicator label="Protection" state={aps.protection} />
+              <ComponentIndicator label="Overall" state={aps.state} signal={aps.signals.state} />
+              <ComponentIndicator label="Ready" state={aps.ready} signal={aps.signals.ready} />
+              <ComponentIndicator label="Power Rectifier" state={aps.rectifier} signal={aps.signals.rectifier} />
+              <ComponentIndicator label="Charging Converter" state={aps.converter} signal={aps.signals.converter} />
+              <ComponentIndicator label="Protection" state={aps.protection} signal={aps.signals.protection} />
             </div>
           </div>
           <Separator />
           <div>
             <div className="font-medium mb-2">Active Alarms</div>
-            {!status || status.alarms.state === "unknown" ? (
-              <StateBadge state="unknown" />
-            ) : status.alarms.active.length === 0 ? (
-              <StateBadge state="ok" />
+            {!status || status.alarms.monitoring_state === "unavailable" ? (
+              <div className="rounded-lg border border-red-300 bg-red-50 p-2 text-sm text-red-900">Alarm monitoring unavailable</div>
+            ) : status.alarms.monitoring_state === "incomplete" ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">Alarm state incomplete</div>
+            ) : status.alarms.monitoring_state === "no_active" ? (
+              <div className="flex items-center gap-2 text-sm"><StateBadge state="ok" /> No active alarms</div>
             ) : (
               <ul className="text-sm space-y-1">
                 {status.alarms.active.map((alarm) => (
                   <li key={alarm.code} className="flex items-center gap-2">
-                    <AlertTriangle className="size-4 text-red-600" />{alarm.message}
+                    <AlertTriangle className="size-4 text-red-600" />
+                    <span>{alarm.message}</span>
+                    <Badge variant="outline">{alarm.severity?.toUpperCase() ?? "SEVERITY UNCONFIGURED"}</Badge>
                   </li>
                 ))}
               </ul>
+            )}
+            {status && (
+              <div className="mt-2 text-[11px] text-slate-500">
+                Trustworthy state signals: {status.coverage.trustworthy}/{status.coverage.total} · Mapped: {status.coverage.mapped}/{status.coverage.total}
+              </div>
             )}
           </div>
         </CardContent>
@@ -433,15 +467,17 @@ function PowerCommands({ title, component, prefix }: { title: string; component:
         <div className="text-xs font-medium text-amber-800">Commands disabled — read-only application</div>
         <Labeled label="Power Rectifier">
           <div id={`${prefix}-rectifier`} className="flex items-center gap-3">
-            <Switch checked={component.rectifier === "on"} disabled aria-label={`${title} power rectifier unavailable`} />
+            <Switch checked={component.rectifier === "on"} disabled aria-label={`${title} power rectifier read-only indication`} />
             <StateBadge state={component.rectifier} />
           </div>
+          <SignalDetail signal={component.signals.rectifier} />
         </Labeled>
         <Labeled label="Charging Converter">
           <div id={`${prefix}-converter`} className="flex items-center gap-3">
-            <Switch checked={component.converter === "on"} disabled aria-label={`${title} charging converter unavailable`} />
+            <Switch checked={component.converter === "on"} disabled aria-label={`${title} charging converter read-only indication`} />
             <StateBadge state={component.converter} />
           </div>
+          <SignalDetail signal={component.signals.converter} />
         </Labeled>
         <div className="flex gap-3 pt-2">
           <Button className="rounded-2xl" variant="secondary" disabled title="Unavailable in this read-only application">Protection Reset</Button>
@@ -466,9 +502,12 @@ function SafetyTab({ status }: { status: SystemStatus | null }) {
           <CardHeader className="pb-2"><CardTitle className="text-sm">{group}</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-1 gap-2">
             {items.map((item) => (
-              <div key={item.name} className="flex items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">{item.name}</span>
-                <StateBadge state={item.state} />
+              <div key={item.logical_name} className="rounded-lg border p-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-muted-foreground">{item.name}</span>
+                  <StateBadge state={item.state} />
+                </div>
+                <SignalDetail signal={item.signal} />
               </div>
             ))}
           </CardContent>
@@ -479,6 +518,39 @@ function SafetyTab({ status }: { status: SystemStatus | null }) {
           <CardContent className="p-6 text-sm font-medium text-red-800">Interlock data is unavailable. No safe state is being asserted.</CardContent>
         </Card>
       )}
+      <Card className="rounded-2xl">
+        <CardHeader className="pb-2"><CardTitle className="text-sm">Alarm Monitoring</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          {!status || status.alarms.monitoring_state === "unavailable" ? (
+            <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900">Alarm monitoring unavailable</div>
+          ) : status.alarms.monitoring_state === "incomplete" ? (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Alarm state incomplete — no all-clear is asserted</div>
+          ) : status.alarms.monitoring_state === "no_active" ? (
+            <div className="flex items-center gap-2 text-sm"><StateBadge state="ok" /> No active alarms</div>
+          ) : (
+            <div className="flex items-center gap-2 text-sm"><StateBadge state="fault" /> Confirmed active alarm(s)</div>
+          )}
+          {status?.alarms.signals.map((signal) => {
+            const alarmState: ConditionState = signal.interpreted_state === "active"
+              ? "fault"
+              : signal.interpreted_state === "inactive"
+                ? "ok"
+                : "unknown";
+            return (
+              <div key={signal.logical_name} className="rounded-lg border p-2">
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span>{signal.display_name}</span>
+                  <div className="flex items-center gap-1">
+                    {signal.severity && <Badge variant="outline">{signal.severity.toUpperCase()}</Badge>}
+                    <StateBadge state={alarmState} />
+                  </div>
+                </div>
+                <SignalDetail signal={signal} />
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
       <Card className="rounded-2xl">
         <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="size-4" /> Actions</CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -565,12 +637,17 @@ const STARTUP_STEPS: Step[] = [
 ];
 
 
-function StartupWizard({ goTo }: { goTo: (tab: string, id?: string) => void }) {
+function StartupWizard({ goTo, status }: { goTo: (tab: string, id?: string) => void; status: SystemStatus | null }) {
   const [index, setIndex] = useState(0);
   const [reviewed, setReviewed] = useState<Record<string, boolean>>({});
   const step = STARTUP_STEPS[index];
   const canNext = reviewed[step.key] || index === STARTUP_STEPS.length - 1;
   const canMarkReviewed = index === 0 || reviewed[STARTUP_STEPS[index - 1].key];
+  const observedState = step.key.startsWith("cps_")
+    ? step.key === "cps_rect" ? status?.cps.rectifier : status?.cps.converter
+    : step.key.startsWith("aps_")
+      ? step.key === "aps_rect" ? status?.aps.rectifier : status?.aps.converter
+      : null;
 
   return (
     <Card className="rounded-2xl">
@@ -615,6 +692,11 @@ function StartupWizard({ goTo }: { goTo: (tab: string, id?: string) => void }) {
                 </div>
               </div>
               <p className="text-sm text-slate-600">{step.desc}</p>
+              {observedState && (
+                <div className="flex items-center gap-2 rounded-lg border bg-slate-50 p-2 text-sm">
+                  PLC observed (read only): <StateBadge state={observedState} />
+                </div>
+              )}
               {step.hint && <div className="text-xs text-slate-500">{step.hint}</div>}
               <div className="pt-2 flex gap-2">
                 <Button disabled={index === 0} onClick={() => setIndex(index - 1)} variant="ghost">Back</Button>
@@ -796,7 +878,7 @@ export default function GyrotronAdamDashboard() {
           <TabsContent value="monitoring"><MonitoringTab data={telemetry.data} latest={telemetry.latest} dataState={telemetry.dataState} /></TabsContent>
           <TabsContent value="flow"><PowerFlowTab /></TabsContent>
           <TabsContent value="safety"><SafetyTab status={authoritativeStatus} /></TabsContent>
-          <TabsContent value="startup"><StartupWizard goTo={goTo} /></TabsContent>
+          <TabsContent value="startup"><StartupWizard goTo={goTo} status={authoritativeStatus} /></TabsContent>
           <TabsContent value="logs"><LogsTab /></TabsContent>
           {user.role === "admin" && <TabsContent value="admin"><AdminTab /></TabsContent>}
         </Tabs>

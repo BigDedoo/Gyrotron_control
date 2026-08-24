@@ -1,8 +1,11 @@
 import math
+import re
 from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.models import AlarmSeverity, InterpretedState
 
 
 class NodeMapError(ValueError):
@@ -25,6 +28,86 @@ REQUIRED_SIGNALS = frozenset(LogicalSignal)
 class ExpectedType(str, Enum):
     FLOAT = "float"
     INTEGER = "integer"
+
+
+class StateExpectedType(str, Enum):
+    BOOLEAN = "boolean"
+    INTEGER = "integer"
+
+
+class StateSignalKind(str, Enum):
+    COMPONENT = "component"
+    INTERLOCK = "interlock"
+    ALARM = "alarm"
+
+
+class LogicalStateSignal(str, Enum):
+    CPS_STATE = "cps.state"
+    CPS_READY = "cps.ready"
+    CPS_RECTIFIER = "cps.rectifier"
+    CPS_CONVERTER = "cps.converter"
+    CPS_PROTECTION = "cps.protection"
+    APS_STATE = "aps.state"
+    APS_READY = "aps.ready"
+    APS_RECTIFIER = "aps.rectifier"
+    APS_CONVERTER = "aps.converter"
+    APS_PROTECTION = "aps.protection"
+    EXTERNAL_INTERLOCK = "interlock.external"
+    GS_DOORS = "interlock.gs_doors"
+    WATERFLOW = "interlock.waterflow"
+    POOR_VACUUM = "interlock.poor_vacuum"
+    CMPS = "interlock.cmps"
+    GPPS = "interlock.gpps"
+    IPPS = "interlock.ipps"
+    CPS_SUPPLY = "interlock.cps"
+    APS_SUPPLY = "interlock.aps"
+    LIQUID_HE_GAUGE = "interlock.liquid_he_gauge"
+    HE_LEVEL_NORMAL = "interlock.he_level_normal"
+    ARC_DETECTOR = "alarm.arc_detector"
+    OVERCURRENT = "alarm.overcurrent"
+    OVERVOLTAGE = "alarm.overvoltage"
+    TEMPERATURE = "alarm.temperature"
+
+
+STATE_SIGNAL_METADATA: dict[LogicalStateSignal, tuple[StateSignalKind, str, str]] = {
+    LogicalStateSignal.CPS_STATE: (StateSignalKind.COMPONENT, "CPS", "Overall"),
+    LogicalStateSignal.CPS_READY: (StateSignalKind.COMPONENT, "CPS", "Ready"),
+    LogicalStateSignal.CPS_RECTIFIER: (StateSignalKind.COMPONENT, "CPS", "Power Rectifier"),
+    LogicalStateSignal.CPS_CONVERTER: (StateSignalKind.COMPONENT, "CPS", "Charging Converter"),
+    LogicalStateSignal.CPS_PROTECTION: (StateSignalKind.COMPONENT, "CPS", "Protection"),
+    LogicalStateSignal.APS_STATE: (StateSignalKind.COMPONENT, "APS", "Overall"),
+    LogicalStateSignal.APS_READY: (StateSignalKind.COMPONENT, "APS", "Ready"),
+    LogicalStateSignal.APS_RECTIFIER: (StateSignalKind.COMPONENT, "APS", "Power Rectifier"),
+    LogicalStateSignal.APS_CONVERTER: (StateSignalKind.COMPONENT, "APS", "Charging Converter"),
+    LogicalStateSignal.APS_PROTECTION: (StateSignalKind.COMPONENT, "APS", "Protection"),
+    LogicalStateSignal.EXTERNAL_INTERLOCK: (StateSignalKind.INTERLOCK, "Environment", "External interlock"),
+    LogicalStateSignal.GS_DOORS: (StateSignalKind.INTERLOCK, "Environment", "GS Doors"),
+    LogicalStateSignal.WATERFLOW: (StateSignalKind.INTERLOCK, "Environment", "Waterflow"),
+    LogicalStateSignal.POOR_VACUUM: (StateSignalKind.INTERLOCK, "Environment", "Poor vacuum"),
+    LogicalStateSignal.CMPS: (StateSignalKind.INTERLOCK, "Supplies", "CMPS"),
+    LogicalStateSignal.GPPS: (StateSignalKind.INTERLOCK, "Supplies", "GPPS"),
+    LogicalStateSignal.IPPS: (StateSignalKind.INTERLOCK, "Supplies", "IPPS"),
+    LogicalStateSignal.CPS_SUPPLY: (StateSignalKind.INTERLOCK, "Supplies", "CPS"),
+    LogicalStateSignal.APS_SUPPLY: (StateSignalKind.INTERLOCK, "Supplies", "APS"),
+    LogicalStateSignal.LIQUID_HE_GAUGE: (StateSignalKind.INTERLOCK, "Cryo", "Liquid He gauge"),
+    LogicalStateSignal.HE_LEVEL_NORMAL: (StateSignalKind.INTERLOCK, "Cryo", "He level normal"),
+    LogicalStateSignal.ARC_DETECTOR: (StateSignalKind.ALARM, "Alarms", "ARC detector"),
+    LogicalStateSignal.OVERCURRENT: (StateSignalKind.ALARM, "Alarms", "Overcurrent"),
+    LogicalStateSignal.OVERVOLTAGE: (StateSignalKind.ALARM, "Alarms", "Overvoltage"),
+    LogicalStateSignal.TEMPERATURE: (StateSignalKind.ALARM, "Alarms", "Temperature"),
+}
+
+
+def state_signal_kind(signal: LogicalStateSignal) -> StateSignalKind:
+    return STATE_SIGNAL_METADATA[signal][0]
+
+
+def state_signal_group(signal: LogicalStateSignal) -> str:
+    return STATE_SIGNAL_METADATA[signal][1]
+
+
+def state_signal_label(signal: LogicalStateSignal) -> str:
+    return STATE_SIGNAL_METADATA[signal][2]
 
 
 class NodeMapping(BaseModel):
@@ -75,12 +158,85 @@ class NodeMapping(BaseModel):
         return value
 
 
+class StateNodeMapping(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    signal: LogicalStateSignal
+    node_id: str = Field(min_length=1, max_length=512)
+    expected_type: StateExpectedType
+    interpretation: dict[str, InterpretedState]
+    display_label: str | None = Field(default=None, min_length=1, max_length=128)
+    group: str | None = Field(default=None, min_length=1, max_length=128)
+    alarm_severity: AlarmSeverity | None = None
+
+    @field_validator("node_id")
+    @classmethod
+    def validate_node_id(cls, value: str) -> str:
+        value = value.strip()
+        normalized = value.upper()
+        if any(
+            marker in normalized
+            for marker in ("TODO", "REPLACE_ME", "CONFIGURE_ME", "PLACEHOLDER")
+        ):
+            raise ValueError("placeholder node IDs are not permitted")
+        if not (";" in value or value.startswith("i=") or value.startswith("s=")):
+            raise ValueError("node_id must use an OPC UA NodeId string")
+        return value
+
+    @field_validator("display_label", "group")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_interpretation(self) -> "StateNodeMapping":
+        if self.expected_type == StateExpectedType.BOOLEAN:
+            if set(self.interpretation) != {"true", "false"}:
+                raise ValueError("boolean state mappings require explicit true and false interpretation")
+        else:
+            if not self.interpretation:
+                raise ValueError("integer state mappings require an explicit enum interpretation")
+            for raw_key in self.interpretation:
+                if re.fullmatch(r"-?(0|[1-9][0-9]*)", raw_key) is None:
+                    raise ValueError("integer interpretation keys must be canonical base-10 integers")
+
+        kind = state_signal_kind(self.signal)
+        if kind == StateSignalKind.ALARM:
+            allowed = {InterpretedState.ACTIVE, InterpretedState.INACTIVE}
+        elif self.signal.value.endswith((".state", ".rectifier", ".converter")):
+            allowed = {InterpretedState.ON, InterpretedState.OFF, InterpretedState.FAULT}
+        else:
+            allowed = {InterpretedState.OK, InterpretedState.FAULT}
+        if not set(self.interpretation.values()).issubset(allowed):
+            expected = ", ".join(sorted(state.value for state in allowed))
+            raise ValueError(f"interpretation for {self.signal.value} must use only: {expected}")
+        if kind != StateSignalKind.ALARM and self.alarm_severity is not None:
+            raise ValueError("alarm_severity is only valid for alarm signals")
+        return self
+
+    @property
+    def label(self) -> str:
+        return self.display_label or state_signal_label(self.signal)
+
+    @property
+    def display_group(self) -> str:
+        return self.group or state_signal_group(self.signal)
+
+    def interpret(self, raw: bool | int) -> InterpretedState:
+        if self.expected_type == StateExpectedType.BOOLEAN:
+            key = "true" if raw is True else "false"
+        else:
+            key = str(raw)
+        return self.interpretation.get(key, InterpretedState.UNKNOWN)
+
+
 class NodeMap(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     schema_version: int = Field(ge=1, le=1)
     purpose: str = Field(min_length=1, max_length=32)
     signals: tuple[NodeMapping, ...]
+    state_signals: tuple[StateNodeMapping, ...] = ()
 
     @field_validator("purpose")
     @classmethod
@@ -90,11 +246,14 @@ class NodeMap(BaseModel):
     @model_validator(mode="after")
     def validate_mappings(self) -> "NodeMap":
         signal_names = [mapping.signal for mapping in self.signals]
-        node_ids = [mapping.node_id for mapping in self.signals]
+        state_signal_names = [mapping.signal for mapping in self.state_signals]
+        node_ids = [mapping.node_id for mapping in (*self.signals, *self.state_signals)]
         if len(signal_names) != len(set(signal_names)):
             raise ValueError("logical signal mappings must be unique")
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("OPC UA node IDs must be unique")
+        if len(state_signal_names) != len(set(state_signal_names)):
+            raise ValueError("logical state signal mappings must be unique")
         missing = REQUIRED_SIGNALS.difference(signal_names)
         extra = set(signal_names).difference(REQUIRED_SIGNALS)
         if missing or extra:
@@ -103,13 +262,16 @@ class NodeMap(BaseModel):
             raise ValueError(f"node map signal mismatch (missing: {missing_text}; extra: {extra_text})")
         if self.purpose == "production" and any(
             "TESTONLY" in mapping.node_id.upper() or "TEST_ONLY" in mapping.node_id.upper()
-            for mapping in self.signals
+            for mapping in (*self.signals, *self.state_signals)
         ):
             raise ValueError("test-only node IDs cannot be activated in a production map")
         return self
 
     def by_signal(self) -> dict[LogicalSignal, NodeMapping]:
         return {mapping.signal: mapping for mapping in self.signals}
+
+    def states_by_signal(self) -> dict[LogicalStateSignal, StateNodeMapping]:
+        return {mapping.signal: mapping for mapping in self.state_signals}
 
 
 def load_node_map(path: Path, *, allowed_purposes: frozenset[str] = frozenset({"production"})) -> NodeMap:

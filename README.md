@@ -2,11 +2,22 @@
 
 ## 1. System Architecture
 
-The Gyrotron Control System is a full-stack HMI foundation for monitoring a high-power gyrotron installation. Phase 2 adds an explicitly read-only OPC UA monitoring boundary; it does not provide hardware control.
+The Gyrotron Control System is a full-stack HMI foundation for monitoring a high-power gyrotron installation. Phase 3 extends the explicitly read-only OPC UA boundary with authoritative PLC-derived CPS, APS, interlock, protection, and alarm state. It does not provide hardware control.
 
 - **Frontend**: A React-based Single Page Application (SPA) providing a modern, responsive user interface for operators. It handles real-time data visualization, control inputs, and operational workflows.
 - **Backend**: A FastAPI (Python) server that owns authentication, typed status, simulated telemetry, and the read-only OPC UA monitoring lifecycle.
-- **PLC boundary**: An `asyncua` client can read configured telemetry nodes into an in-process typed cache. It exposes no write method. Simulation remains the default and never creates an OPC UA client.
+- **PLC boundary**: One `asyncua` client reads configured telemetry and state nodes into one in-process typed snapshot/cache. It exposes no write method. Simulation remains the default and never creates an OPC UA client.
+
+The authoritative path is:
+
+```text
+PLC OPC UA server
+→ read-only typed telemetry/state mappings
+→ one reconnecting monitor/cache
+→ authoritative system snapshot
+→ authenticated FastAPI APIs
+→ React HMI
+```
 
 ```mermaid
 graph LR
@@ -40,7 +51,7 @@ graph LR
     end
 
     %% Inter-layer Communication
-    UI <-->|HTTP / WebSocket| API
+    UI <-->|Authenticated HTTP polling| API
     OPC -->|OPC UA reads only| PLC
 
     %% Styling
@@ -75,7 +86,7 @@ The backend is built with **FastAPI** and served by **Uvicorn**.
     - **Purpose**: Returns the typed, backend-authoritative application status contract.
     - **Returns**: Mode, source, connection/data/overall states, CPS/APS state, interlocks, alarms and timestamp.
     - In simulation, PLC-dependent component and interlock states remain `unknown`.
-    - In `opcua_readonly`, connection/data state comes from the monitor. CPS, APS, interlocks, alarms and overall machine state remain `unknown` because Phase 2 maps telemetry only.
+    - In `opcua_readonly`, connection/data state, CPS, APS, interlocks, alarms, mapping coverage, and conservative overall state come from the same monitor snapshot. Unmapped, untrusted, stale, or unavailable state remains `unknown`.
 
 - **`POST /api/setpoint`** (authenticated)
     - Reserved for the future command boundary.
@@ -89,7 +100,7 @@ The backend is built with **FastAPI** and served by **Uvicorn**.
     - `/api/users` and all user mutations require the backend `admin` role. Telemetry and status require an authenticated user.
 
 ### 2.2 Safety Boundary (`app.core.safety`)
-The safety module intentionally exposes no checks or commands. It is not used to assert machine safety. Interlocks are reported as `unknown`, and reset/emergency controls are visibly unavailable. Physical and PLC safety systems remain authoritative.
+The safety module intentionally exposes no checks or commands. It is not used to assert machine safety. Mapped interlocks are displayed as PLC observations with quality/freshness; every unproven value is `unknown`. Reset/emergency controls remain visibly unavailable. Physical and PLC safety systems remain authoritative.
 
 ## 3. Frontend Application
 
@@ -106,7 +117,8 @@ The frontend is a **Vite + React 19** application using **TypeScript**. It utili
     6.  APS (Anode Power Supply) Activation
     7.  Final Verification
 - **Power Control**: Requested setpoints may be drafted locally, but Apply and all hardware controls are disabled in both modes. Backend status remains separate from requested values.
-- **Safety Monitor**: Renders backend status. PLC-dependent interlocks are explicitly `UNKNOWN` until approved nodes and semantics are supplied.
+- **Safety Monitor**: Renders backend-authoritative interlock and alarm observations, including mapping, quality, freshness, and configured severity. It never renders unknown, stale, uncertain, or unavailable state as green/OK.
+- **Alarm presentation**: Distinguishes confirmed active alarms, confirmed no active alarms, incomplete coverage, and unavailable monitoring. `No active alarms` appears only when every supported alarm signal is mapped, fresh, good-quality, and explicitly inactive.
 
 ### 3.2 State Management
 - **Telemetry**: Managed via a custom hook `useTelemetry` that polls the backend and maintains a rolling buffer of the last 40 data points for charting.
@@ -150,7 +162,7 @@ This application is not a safety-rated system and does not replace PLC or physic
 
 `opcua_readonly` requires `OPCUA_ENDPOINT_URL` and `OPCUA_NODE_MAP_PATH`. Timeouts, monitor interval, bounded reconnect delay and stale threshold are independently validated; see `backend/.env.example`.
 
-The human-reviewable JSON node map contains exactly the seven logical telemetry signals. Each mapping defines:
+The human-reviewable JSON node map contains exactly the seven logical telemetry signals and an optional `state_signals` array. Telemetry mappings define:
 
 ```json
 {
@@ -163,7 +175,22 @@ The human-reviewable JSON node map contains exactly the seven logical telemetry 
 }
 ```
 
-The bundled `backend/config/opcua_nodes.example.json` is marked `purpose=template` and uses test-only identifiers. The application rejects it in `opcua_readonly`. Copy it to an untracked/local configuration file, replace every mapping with approved production data, review it, and set `purpose=production`. Placeholder, missing, duplicate or incomplete mappings are rejected.
+State mappings define the logical signal, NodeId, expected PLC type, and an explicit raw-to-application interpretation. Optional display labels/groups and alarm severity are presentation metadata:
+
+```json
+{
+  "signal": "interlock.poor_vacuum",
+  "node_id": "ns=2;s=Approved.Node.From.Controls.Engineering",
+  "expected_type": "boolean",
+  "interpretation": {"true": "fault", "false": "ok"},
+  "display_label": "Poor vacuum",
+  "group": "Environment"
+}
+```
+
+Boolean mappings must contain both `true` and `false`; there is no global polarity assumption. Integer mappings use explicit canonical integer keys, for example `{"0":"off","1":"on","2":"fault"}`. Values outside that mapping become `UNKNOWN`. Supported application semantics are constrained by signal role: component power state uses `on/off/fault`, readiness/protection/interlocks use `ok/fault`, and alarms use `active/inactive`. Unsupported PLC types, invalid enum keys, invalid severity, duplicate logical names, and duplicate NodeIds are rejected.
+
+The bundled `backend/config/opcua_nodes.example.json` is marked `purpose=template` and uses test-only identifiers. The application rejects it in `opcua_readonly`. Copy it to an untracked/local configuration file, replace every mapping with approved production data, review it, and set `purpose=production`. The seven telemetry mappings remain mandatory. Production state mapping may be partial during commissioning: every absent logical state is listed in coverage and exposed as `UNKNOWN`, never fabricated. Placeholder/test NodeIds and malformed mappings are rejected.
 
 For secure OPC UA, configure an explicit supported `OPCUA_SECURITY_POLICY`, `OPCUA_SECURITY_MODE`, client certificate and private key; an optional pinned server certificate is supported. Optional username/password authentication must be configured as a pair. Security setup failures abort the connection and never downgrade to insecure OPC UA. Do not commit credentials, certificates or private keys.
 
@@ -172,16 +199,25 @@ For secure OPC UA, configure an explicit supported `OPCUA_SECURITY_POLICY`, `OPC
 - Connection state: `connecting`, `connected`, `disconnected`, or `error` (`simulated` in simulation).
 - Data state: `live`, `degraded`, `stale`, or `unavailable`.
 - Per-signal quality: `good`, `uncertain`, `bad`, or `unavailable`.
-- Any partial bad/uncertain result is visibly degraded. Connection loss immediately makes cached data stale and later unavailable; it is never presented as nominal.
+- State observations retain the raw PLC boolean/integer, interpreted application state, quality, source timestamp, monitor observation time, source, and per-signal data state.
+- `source_timestamp` is PLC provenance. `observed_at` is the successful backend observation/read time and drives communication freshness; an unchanged boolean is not stale merely because its source timestamp is old.
+- Only fresh, good-quality values with an explicit interpretation can produce trusted `ON`, `OFF`, `OK`, `FAULT`, `ACTIVE`, or `INACTIVE`. Uncertain quality remains visible but is not trusted as a positive state. Bad/unavailable quality becomes `UNKNOWN`; communication failure is neither a confirmed fault nor OK.
+- One bad node degrades only that signal; unrelated good observations remain usable. Connection loss immediately makes cached state stale and removes trusted positive indications, then makes it unavailable after the configured threshold.
 - Reconnect attempts are monitor-owned and use bounded exponential backoff. Frontend HTTP polling never drives OPC UA connection attempts.
+
+### Mapping coverage and overall state
+
+The Phase 3 logical contract contains CPS/APS overall, ready, rectifier, converter, and protection signals; environment/supply/cryo interlocks; and four alarm concepts. `/api/status.coverage` reports total, mapped, trustworthy, complete, and missing logical names.
+
+A confirmed fresh, good-quality mapped fault or active alarm may produce `overall_state=fault`, even if another unrelated signal is missing. `overall_state=nominal` requires the entire supported state contract to be mapped and trustworthy with no interpreted fault/active value. Partial or degraded coverage therefore produces `unknown`. This is an HMI monitoring summary, never a “safe to operate” assertion.
 
 ### Local simulator tests
 
-The backend integration suite starts an `asyncua` server bound only to `127.0.0.1`, creates test-only nodes, verifies typed reads and timestamps, drops the local transport, and verifies reconnect/recovery. It never uses a production endpoint or real PLC.
+The backend integration suite starts an `asyncua` server bound only to `127.0.0.1`, creates test-only telemetry/component/interlock/alarm nodes, verifies raw and interpreted values, polarity, partial failures, timestamps, fault transitions, stale/unavailable state, and reconnect/recovery. It never uses a production endpoint or real PLC.
 
 ### Production information still required
 
-Controls/PLC engineering must supply and approve the production endpoint, node IDs, namespace indexes or URIs, PLC data types, engineering units/scaling, sampling requirements, security policy, certificates/trust requirements, and any authentication requirements. CPS/APS state, interlock, protection and alarm nodes/semantics are also unknown. Command and acknowledgement nodes are deliberately out of Phase 2 and must not be configured as telemetry.
+Controls/PLC engineering must supply and approve the production endpoint, namespace indexes/URIs, PLC data types, engineering units/scaling, sampling requirements, security policy, certificates/trust requirements, and authentication requirements. No production state mapping is known in this repository. Required commissioning information includes CPS/APS state, ready, rectifier, converter and protection NodeIds/types/semantics; all environment, supply and cryo interlock NodeIds and polarity; all alarm NodeIds, polarity, severity and any latching semantics; and any integer enum meanings. Command, reset, emergency, and acknowledgement nodes are outside Phase 3 and must not be added to this read-only map.
 
 ### Tests
 
@@ -211,8 +247,8 @@ npm run build
 | `core/auth.py` | **Authentication Service**. Implements LDAP/Active Directory authentication logic to verify user credentials. |
 | `core/users.py` | **User Management**. Manages user roles and permissions (e.g., Operator vs. Admin). |
 | `opcua/client.py` | **Read-only OPC UA Client**. Handles bounded connection, disconnection and typed reads only. |
-| `opcua/node_map.py` | Validates logical signal-to-node mappings, expected types, units and optional scaling. |
-| `opcua/monitor.py` | Owns reconnect behavior and the latest cached typed telemetry snapshot. |
+| `opcua/node_map.py` | Validates telemetry/state mappings, expected types, explicit interpretation, presentation metadata, and production protections. |
+| `opcua/monitor.py` | Owns reconnect behavior and the single cached typed telemetry/machine-state snapshot. |
 
 ### 6.2 Frontend (`frontend/src`)
 
