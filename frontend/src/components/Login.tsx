@@ -3,9 +3,11 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Lock } from "lucide-react";
+import { api, ApiError } from "@/api/client";
+import type { SessionUser } from "@/api/types";
 
 interface LoginProps {
-    onLogin: (username: string, role: string) => void;
+    onLogin: (user: SessionUser) => void;
 }
 
 export default function Login({ onLogin }: LoginProps) {
@@ -20,18 +22,15 @@ export default function Login({ onLogin }: LoginProps) {
         setError("");
 
         try {
-            const res = await fetch("/api/login", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, password }),
-            });
-
-            if (!res.ok) throw new Error("Authentication failed");
-
-            const data = await res.json();
-            onLogin(data.username, data.role);
-        } catch (err) {
-            setError("Invalid credentials. Please try again.");
+            const user = await api.login(username, password);
+            setPassword("");
+            onLogin(user);
+        } catch (caught) {
+            if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+                setError(caught.message);
+            } else {
+                setError("Unable to contact the authentication service.");
+            }
         } finally {
             setLoading(false);
         }

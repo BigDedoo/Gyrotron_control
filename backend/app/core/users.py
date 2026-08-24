@@ -1,96 +1,158 @@
 import json
 import os
-import logging
-from typing import Dict, List, Union
+import tempfile
+import threading
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from app.models import UserRecord, UserRole
 
-DATA_FILE = "data/users.json"
+
+DEFAULT_DATA_FILE = Path(__file__).resolve().parents[2] / "data" / "users.json"
+
+
+class UserManagementError(Exception):
+    pass
+
+
+class UserStorageError(UserManagementError):
+    pass
+
+
+class UserAlreadyExists(UserManagementError):
+    pass
+
+
+class UserNotFound(UserManagementError):
+    pass
+
+
+class LastAdministratorError(UserManagementError):
+    pass
+
 
 class UserManager:
-    def __init__(self):
-        self._ensure_data_dir()
-        self.users: Dict[str, str] = self._load_users()
+    def __init__(
+        self,
+        data_file: Path | None = None,
+        default_users: dict[str, UserRole] | None = None,
+    ) -> None:
+        self.data_file = (data_file or DEFAULT_DATA_FILE).resolve()
+        self._default_users = default_users or {"gemond": UserRole.ADMIN}
+        self._lock = threading.RLock()
+        self.users = self._load_users()
 
-    def _ensure_data_dir(self):
-        if not os.path.exists("data"):
-            os.makedirs("data")
+    def _load_users(self) -> dict[str, UserRole]:
+        self.data_file.parent.mkdir(parents=True, exist_ok=True)
+        if not self.data_file.exists():
+            self._save_users(self._default_users)
+            return dict(self._default_users)
 
-    def _load_users(self) -> Dict[str, str]:
-        if not os.path.exists(DATA_FILE):
-            # Default initialization: gemond is admin
-            default_users = {"gemond": "admin"}
-            self._save_users(default_users)
-            return default_users
-        
         try:
-            with open(DATA_FILE, "r") as f:
-                data = json.load(f)
-                
-            # MIGRATION: If data is a list (legacy), convert to dict
-            if isinstance(data, list):
-                logger.info("Migrating legacy user list to RBAC dict...")
-                new_data = {}
-                for u in data:
-                    # Default everyone to 'user', force gemond to 'admin'
-                    role = "admin" if u == "gemond" else "user"
-                    new_data[u] = role
-                self._save_users(new_data)
-                return new_data
-            
-            return data
-            
-        except Exception as e:
-            logger.error(f"Error loading users: {e}")
-            return {"gemond": "admin"}
+            with self.data_file.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if not isinstance(data, dict):
+                raise ValueError("user store must contain an object")
+            return {str(username): UserRole(role) for username, role in data.items()}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise UserStorageError(f"Unable to load user store: {exc}") from exc
 
-    def _save_users(self, users: Dict[str, str]):
+    def _save_users(self, users: dict[str, UserRole]) -> None:
+        self.data_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path: Path | None = None
         try:
-            with open(DATA_FILE, "w") as f:
-                json.dump(users, f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving users: {e}")
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=self.data_file.parent,
+                prefix=f".{self.data_file.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary_path = Path(handle.name)
+                json.dump({name: role.value for name, role in users.items()}, handle, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, self.data_file)
+        except OSError as exc:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+            raise UserStorageError(f"Unable to save user store: {exc}") from exc
 
-    def is_allowed(self, username: str) -> bool:
-        # Check against simple match, UPN, or DOMAIN\user
-        return self.get_role(username) is not None
+    @staticmethod
+    def _short_identity(username: str) -> str:
+        short = username.strip()
+        if "\\" in short:
+            short = short.rsplit("\\", 1)[-1]
+        if "@" in short:
+            short = short.split("@", 1)[0]
+        return short.casefold()
 
-    def get_role(self, username: str) -> Union[str, None]:
-        # exact match
-        if username in self.users:
-            return self.users[username]
-            
-        # user@domain
-        if "@" in username:
-            short = username.split("@")[0]
-            if short in self.users:
-                return self.users[short]
-
-        # domain\user
-        if "\\" in username:
-            short = username.split("\\")[1]
-            if short in self.users:
-                return self.users[short]
-                
+    def get_role(self, username: str) -> UserRole | None:
+        target = self._short_identity(username)
+        with self._lock:
+            for stored_username, role in self.users.items():
+                if self._short_identity(stored_username) == target:
+                    return role
         return None
 
-    def get_users(self) -> List[Dict[str, str]]:
-        # Return list of objects for frontend API
-        return [{"username": u, "role": r} for u, r in self.users.items()]
+    def get_users(self) -> list[UserRecord]:
+        with self._lock:
+            return [
+                UserRecord(username=username, role=role)
+                for username, role in sorted(self.users.items(), key=lambda item: item[0].casefold())
+            ]
 
-    def add_user(self, username: str, role: str = "user"):
-        self.users[username] = role
-        self._save_users(self.users)
+    def add_user(self, username: str, role: UserRole) -> None:
+        with self._lock:
+            if self.get_role(username) is not None:
+                raise UserAlreadyExists(f"User {username} already exists")
+            updated = dict(self.users)
+            updated[username] = role
+            self._save_users(updated)
+            self.users = updated
 
-    def update_role(self, username: str, role: str):
-        if username in self.users:
-            self.users[username] = role
-            self._save_users(self.users)
+    def update_role(self, username: str, role: UserRole) -> None:
+        with self._lock:
+            stored_username = self._find_stored_username(username)
+            if stored_username is None:
+                raise UserNotFound(f"User {username} was not found")
+            if self.users[stored_username] is UserRole.ADMIN and role is not UserRole.ADMIN:
+                self._ensure_another_admin(stored_username)
+            updated = dict(self.users)
+            updated[stored_username] = role
+            self._save_users(updated)
+            self.users = updated
 
-    def remove_user(self, username: str):
-        if username in self.users:
-            del self.users[username]
-            self._save_users(self.users)
+    def remove_user(self, username: str) -> None:
+        with self._lock:
+            stored_username = self._find_stored_username(username)
+            if stored_username is None:
+                raise UserNotFound(f"User {username} was not found")
+            if self.users[stored_username] is UserRole.ADMIN:
+                self._ensure_another_admin(stored_username)
+            updated = dict(self.users)
+            del updated[stored_username]
+            self._save_users(updated)
+            self.users = updated
 
-# Singleton instance
+    def _find_stored_username(self, username: str) -> str | None:
+        target = self._short_identity(username)
+        return next(
+            (
+                stored_username
+                for stored_username in self.users
+                if self._short_identity(stored_username) == target
+            ),
+            None,
+        )
+
+    def _ensure_another_admin(self, excluded_username: str) -> None:
+        if not any(
+            role is UserRole.ADMIN and username != excluded_username
+            for username, role in self.users.items()
+        ):
+            raise LastAdministratorError("The last administrator cannot be removed or demoted")
+
+
 user_manager = UserManager()
