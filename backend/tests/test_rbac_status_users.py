@@ -67,6 +67,19 @@ def test_status_is_explicit_simulation_with_unknown_hardware(
     assert status["cps"]["state"] == "unknown"
     assert status["aps"]["state"] == "unknown"
     assert all(interlock["state"] == "unknown" for interlock in status["interlocks"])
+    assert status["coverage"]["mapped"] == 0
+    assert status["coverage"]["complete"] is False
+
+
+def test_request_or_frontend_state_cannot_override_authoritative_status(
+    client: TestClient,
+    authenticate,
+):
+    login(client, authenticate, "operator")
+    response = client.get("/api/status?cps=on&aps=on&ready=ok")
+    assert response.status_code == 200
+    assert response.json()["cps"]["state"] == "unknown"
+    assert response.json()["aps"]["state"] == "unknown"
 
 
 def test_telemetry_is_typed_and_explicitly_simulated(client: TestClient, authenticate):

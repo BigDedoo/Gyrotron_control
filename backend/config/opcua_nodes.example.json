@@ -9,5 +9,25 @@
     {"signal": "heLvl", "node_id": "ns=2;s=TestOnly.Gyrotron.heLvl", "expected_type": "float", "unit": "%"},
     {"signal": "Thot", "node_id": "ns=2;s=TestOnly.Gyrotron.Thot", "expected_type": "float", "unit": "degC"},
     {"signal": "Tcold", "node_id": "ns=2;s=TestOnly.Gyrotron.Tcold", "expected_type": "float", "unit": "degC"}
+  ],
+  "state_signals": [
+    {"signal": "cps.state", "node_id": "ns=2;s=TestOnly.Gyrotron.CPS.State", "expected_type": "boolean", "interpretation": {"true": "on", "false": "off"}},
+    {"signal": "cps.ready", "node_id": "ns=2;s=TestOnly.Gyrotron.CPS.Ready", "expected_type": "boolean", "interpretation": {"true": "ok", "false": "fault"}},
+    {"signal": "cps.rectifier", "node_id": "ns=2;s=TestOnly.Gyrotron.CPS.Rectifier", "expected_type": "boolean", "interpretation": {"true": "on", "false": "off"}},
+    {"signal": "cps.converter", "node_id": "ns=2;s=TestOnly.Gyrotron.CPS.Converter", "expected_type": "boolean", "interpretation": {"true": "on", "false": "off"}},
+    {"signal": "cps.protection", "node_id": "ns=2;s=TestOnly.Gyrotron.CPS.Protection", "expected_type": "boolean", "interpretation": {"true": "ok", "false": "fault"}},
+    {"signal": "aps.state", "node_id": "ns=2;s=TestOnly.Gyrotron.APS.State", "expected_type": "boolean", "interpretation": {"true": "on", "false": "off"}},
+    {"signal": "aps.ready", "node_id": "ns=2;s=TestOnly.Gyrotron.APS.Ready", "expected_type": "boolean", "interpretation": {"true": "ok", "false": "fault"}},
+    {"signal": "aps.rectifier", "node_id": "ns=2;s=TestOnly.Gyrotron.APS.Rectifier", "expected_type": "boolean", "interpretation": {"true": "on", "false": "off"}},
+    {"signal": "aps.converter", "node_id": "ns=2;s=TestOnly.Gyrotron.APS.Converter", "expected_type": "boolean", "interpretation": {"true": "on", "false": "off"}},
+    {"signal": "aps.protection", "node_id": "ns=2;s=TestOnly.Gyrotron.APS.Protection", "expected_type": "boolean", "interpretation": {"true": "ok", "false": "fault"}},
+    {"signal": "interlock.external", "node_id": "ns=2;s=TestOnly.Gyrotron.Interlock.External", "expected_type": "boolean", "interpretation": {"true": "ok", "false": "fault"}, "group": "Environment"},
+    {"signal": "interlock.gs_doors", "node_id": "ns=2;s=TestOnly.Gyrotron.Interlock.Doors", "expected_type": "boolean", "interpretation": {"true": "ok", "false": "fault"}, "group": "Environment"},
+    {"signal": "interlock.waterflow", "node_id": "ns=2;s=TestOnly.Gyrotron.Interlock.Waterflow", "expected_type": "boolean", "interpretation": {"true": "ok", "false": "fault"}, "group": "Environment"},
+    {"signal": "interlock.poor_vacuum", "node_id": "ns=2;s=TestOnly.Gyrotron.Interlock.PoorVacuum", "expected_type": "boolean", "interpretation": {"true": "fault", "false": "ok"}, "group": "Environment"},
+    {"signal": "alarm.arc_detector", "node_id": "ns=2;s=TestOnly.Gyrotron.Alarm.Arc", "expected_type": "boolean", "interpretation": {"true": "active", "false": "inactive"}, "alarm_severity": "critical"},
+    {"signal": "alarm.overcurrent", "node_id": "ns=2;s=TestOnly.Gyrotron.Alarm.Overcurrent", "expected_type": "boolean", "interpretation": {"true": "active", "false": "inactive"}, "alarm_severity": "critical"},
+    {"signal": "alarm.overvoltage", "node_id": "ns=2;s=TestOnly.Gyrotron.Alarm.Overvoltage", "expected_type": "boolean", "interpretation": {"true": "active", "false": "inactive"}, "alarm_severity": "warning"},
+    {"signal": "alarm.temperature", "node_id": "ns=2;s=TestOnly.Gyrotron.Alarm.Temperature", "expected_type": "boolean", "interpretation": {"true": "active", "false": "inactive"}, "alarm_severity": "warning"}
   ]
 }

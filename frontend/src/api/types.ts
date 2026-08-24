@@ -7,6 +7,9 @@ export type OverallState = "simulation" | "nominal" | "unknown" | "fault";
 export type ComponentState = "on" | "off" | "unknown" | "fault";
 export type ConditionState = "ok" | "fault" | "unknown";
 export type SignalQuality = "good" | "uncertain" | "bad" | "unavailable";
+export type InterpretedState = "on" | "off" | "ok" | "fault" | "active" | "inactive" | "unknown";
+export type AlarmMonitoringState = "active" | "no_active" | "incomplete" | "unavailable";
+export type AlarmSeverity = "info" | "warning" | "critical";
 
 export interface SessionUser {
   username: string;
@@ -40,24 +43,53 @@ export interface ComponentStatus {
   rectifier: ComponentState;
   converter: ComponentState;
   protection: ConditionState;
+  signals: Record<string, StateSignalValue>;
+}
+
+export interface StateSignalValue {
+  logical_name: string;
+  display_name: string;
+  group: string;
+  mapped: boolean;
+  raw_value: boolean | number | null;
+  interpreted_state: InterpretedState;
+  quality: SignalQuality;
+  source_timestamp: string | null;
+  observed_at: string | null;
+  source: DataSource;
+  data_state: DataState;
+  severity: AlarmSeverity | null;
 }
 
 export interface InterlockStatus {
+  logical_name: string;
   group: string;
   name: string;
   state: ConditionState;
+  signal: StateSignalValue;
 }
 
 export interface AlarmStatus {
   code: string;
   message: string;
-  severity: string;
+  severity: AlarmSeverity | null;
   active_since: string | null;
+  signal: StateSignalValue;
 }
 
 export interface AlarmSummary {
   state: ConditionState;
+  monitoring_state: AlarmMonitoringState;
   active: AlarmStatus[];
+  signals: StateSignalValue[];
+}
+
+export interface MappingCoverage {
+  total: number;
+  mapped: number;
+  trustworthy: number;
+  complete: boolean;
+  missing: string[];
 }
 
 export interface SystemStatus {
@@ -70,6 +102,7 @@ export interface SystemStatus {
   aps: ComponentStatus;
   interlocks: InterlockStatus[];
   alarms: AlarmSummary;
+  coverage: MappingCoverage;
   timestamp: string;
   last_connection_attempt: string | null;
   last_successful_read: string | null;

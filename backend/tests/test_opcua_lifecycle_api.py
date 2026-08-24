@@ -174,7 +174,16 @@ def test_readonly_api_returns_explicit_unavailable_without_snapshot(tmp_path: Pa
 
 
 def test_readonly_boundary_exposes_no_write_capability(client, authenticate):
-    forbidden = {"write_node", "write_value", "set_value", "setpoint"}
+    forbidden = {
+        "write_node",
+        "write_value",
+        "set_value",
+        "set_data_value",
+        "command",
+        "reset",
+        "acknowledge",
+        "setpoint",
+    }
     assert forbidden.isdisjoint(dir(ReadOnlyOPCUAClient))
     assert not hasattr(safety, "emergency_stop")
     assert not hasattr(safety, "check_safety_interlocks")
@@ -186,6 +195,8 @@ def test_readonly_boundary_exposes_no_write_capability(client, authenticate):
         "/api/interlocks/reset",
         "/api/cps",
         "/api/aps",
+        "/api/alarms/acknowledge",
+        "/api/alarm/ack",
     }
     assert hardware_routes.isdisjoint({route.path for route in client.app.routes})
 
@@ -193,3 +204,15 @@ def test_readonly_boundary_exposes_no_write_capability(client, authenticate):
     response = client.post("/api/login", json={"username": "operator", "password": "valid"})
     assert response.status_code == 200
     assert client.post("/api/setpoint").status_code == 503
+
+
+def test_production_opcua_code_contains_no_write_invocation():
+    app_root = Path(__file__).resolve().parents[1] / "app"
+    source = "\n".join(path.read_text(encoding="utf-8") for path in app_root.rglob("*.py"))
+    forbidden_calls = (
+        ".write_node(",
+        ".write_value(",
+        ".set_value(",
+        ".set_data_value(",
+    )
+    assert all(call not in source for call in forbidden_calls)

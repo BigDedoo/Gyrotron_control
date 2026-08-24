@@ -4,9 +4,19 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.core.config import OPCUASettings
-from app.models import ConnectionState, DataSource, DataState, SignalQuality, TelemetryPoint
+from app.models import (
+    ConnectionState,
+    DataSource,
+    DataState,
+    InterpretedState,
+    MachineStatePoint,
+    MappingCoverage,
+    OPCUASnapshot,
+    SignalQuality,
+    TelemetryPoint,
+)
 from app.opcua.client import OPCUAClientError, ReadOnlyOPCUAClient
-from app.opcua.node_map import LogicalSignal, NodeMap
+from app.opcua.node_map import LogicalSignal, LogicalStateSignal, NodeMap
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +28,7 @@ class MonitorView:
     data_state: DataState
     last_connection_attempt: datetime | None
     last_successful_read: datetime | None
-    snapshot: TelemetryPoint | None
+    snapshot: OPCUASnapshot | None
     error: str | None
 
 
@@ -36,7 +46,7 @@ class OPCUAMonitor:
         self._connection_state = ConnectionState.DISCONNECTED
         self._last_connection_attempt: datetime | None = None
         self._last_successful_read: datetime | None = None
-        self._snapshot: TelemetryPoint | None = None
+        self._snapshot: OPCUASnapshot | None = None
         self._error: str | None = None
         self._sequence = 0
         self._stop_event = asyncio.Event()
@@ -92,8 +102,15 @@ class OPCUAMonitor:
             or age > self.settings.monitor_interval_seconds * 2
         ):
             return DataState.STALE
-        qualities = [getattr(snapshot, signal.value).quality for signal in LogicalSignal]
-        if all(quality == SignalQuality.GOOD for quality in qualities):
+        qualities = [
+            getattr(snapshot.telemetry, signal.value).quality for signal in LogicalSignal
+        ]
+        qualities.extend(sample.quality for sample in snapshot.machine_state.signals.values())
+        state_interpretations_valid = all(
+            sample.interpreted_state != InterpretedState.UNKNOWN
+            for sample in snapshot.machine_state.signals.values()
+        )
+        if all(quality == SignalQuality.GOOD for quality in qualities) and state_interpretations_valid:
             return DataState.LIVE
         return DataState.DEGRADED
 
@@ -142,6 +159,7 @@ class OPCUAMonitor:
 
     async def _read_once(self) -> None:
         values = await self.client.read_signals(self.node_map.signals)
+        state_values = await self.client.read_state_signals(self.node_map.state_signals)
         usable = [
             sample
             for sample in values.values()
@@ -153,18 +171,52 @@ class OPCUAMonitor:
 
         self._sequence += 1
         now = datetime.now(timezone.utc)
-        self._snapshot = TelemetryPoint(
+        telemetry = TelemetryPoint(
             timestamp=now,
             source=DataSource.OPCUA,
             sequence=self._sequence,
             **{signal.value: values[signal] for signal in LogicalSignal},
+        )
+        mapped = set(state_values)
+        trustworthy = sum(
+            sample.quality == SignalQuality.GOOD
+            and sample.interpreted_state != InterpretedState.UNKNOWN
+            for sample in state_values.values()
+        )
+        coverage = MappingCoverage(
+            total=len(LogicalStateSignal),
+            mapped=len(mapped),
+            trustworthy=trustworthy,
+            complete=(
+                len(mapped) == len(LogicalStateSignal)
+                and trustworthy == len(LogicalStateSignal)
+            ),
+            missing=[signal.value for signal in LogicalStateSignal if signal not in mapped],
+        )
+        machine_state = MachineStatePoint(
+            timestamp=now,
+            source=DataSource.OPCUA,
+            sequence=self._sequence,
+            signals={signal.value: sample for signal, sample in state_values.items()},
+            coverage=coverage,
+        )
+        self._snapshot = OPCUASnapshot(
+            timestamp=now,
+            sequence=self._sequence,
+            telemetry=telemetry,
+            machine_state=machine_state,
         )
         self._last_successful_read = now
         self._connection_state = ConnectionState.CONNECTED
         self._error = (
             None
             if all(sample.quality == SignalQuality.GOOD for sample in values.values())
-            else "One or more OPC UA telemetry signals are degraded"
+            and all(
+                sample.quality == SignalQuality.GOOD
+                and sample.interpreted_state != InterpretedState.UNKNOWN
+                for sample in state_values.values()
+            )
+            else "One or more configured OPC UA signals are degraded"
         )
 
     async def _wait(self, delay: float) -> None:

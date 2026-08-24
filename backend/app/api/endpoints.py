@@ -170,7 +170,7 @@ async def get_telemetry(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"OPC UA telemetry is {view.data_state.value}",
             )
-        return view.snapshot
+        return getattr(view.snapshot, "telemetry", view.snapshot)
 
     elapsed = time.monotonic() - start_time
     sequence = int(elapsed)

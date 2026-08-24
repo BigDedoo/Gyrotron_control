@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 
 from app.core.config import AppSettings, get_settings
 from app.models import (
+    AlarmMonitoringState,
+    AlarmStatus,
     AlarmSummary,
     ComponentState,
     ComponentStatus,
@@ -10,28 +12,151 @@ from app.models import (
     DataSource,
     DataState,
     InterlockStatus,
+    InterpretedState,
+    MappingCoverage,
     OverallState,
+    SignalQuality,
+    StateSignalValue,
     SystemStatus,
 )
 from app.opcua.monitor import OPCUAMonitor
+from app.opcua.node_map import (
+    LogicalStateSignal,
+    StateSignalKind,
+    state_signal_group,
+    state_signal_kind,
+    state_signal_label,
+)
 
 
-INTERLOCK_GROUPS = {
-    "Environment": ["External interlock", "GS Doors", "Waterflow", "Poor vacuum"],
-    "Supplies": ["CMPS ON", "GPPS ON", "IPPS ON", "APS ON", "CPS ON"],
-    "Alarms": ["ARC detector", "Overcurrent", "Overvoltage", "Temperature"],
-    "Cryo": ["Liquid He gauge", "He level normal"],
-}
-
-
-def _unknown_component() -> ComponentStatus:
-    return ComponentStatus(
-        state=ComponentState.UNKNOWN,
-        ready=ConditionState.UNKNOWN,
-        rectifier=ComponentState.UNKNOWN,
-        converter=ComponentState.UNKNOWN,
-        protection=ConditionState.UNKNOWN,
+def _unknown_signal(
+    signal: LogicalStateSignal,
+    source: DataSource,
+    *,
+    mapped: bool = False,
+    display_name: str | None = None,
+    group: str | None = None,
+    severity=None,
+) -> StateSignalValue:
+    return StateSignalValue(
+        logical_name=signal.value,
+        display_name=display_name or state_signal_label(signal),
+        group=group or state_signal_group(signal),
+        mapped=mapped,
+        raw_value=None,
+        interpreted_state=InterpretedState.UNKNOWN,
+        quality=SignalQuality.UNAVAILABLE,
+        source_timestamp=None,
+        observed_at=None,
+        source=source,
+        data_state=DataState.UNAVAILABLE,
+        severity=severity,
     )
+
+
+def _effective_signal(sample: StateSignalValue, data_state: DataState) -> StateSignalValue:
+    if data_state in {DataState.STALE, DataState.UNAVAILABLE}:
+        return sample.model_copy(
+            update={
+                "interpreted_state": InterpretedState.UNKNOWN,
+                "data_state": data_state,
+            }
+        )
+    if sample.quality == SignalQuality.GOOD:
+        return sample
+    return sample.model_copy(update={"interpreted_state": InterpretedState.UNKNOWN})
+
+
+def _trusted(sample: StateSignalValue) -> bool:
+    return (
+        sample.mapped
+        and sample.data_state == DataState.LIVE
+        and sample.quality == SignalQuality.GOOD
+        and sample.interpreted_state != InterpretedState.UNKNOWN
+    )
+
+
+def _component_state(sample: StateSignalValue) -> ComponentState:
+    if not _trusted(sample):
+        return ComponentState.UNKNOWN
+    return {
+        InterpretedState.ON: ComponentState.ON,
+        InterpretedState.OFF: ComponentState.OFF,
+        InterpretedState.FAULT: ComponentState.FAULT,
+    }.get(sample.interpreted_state, ComponentState.UNKNOWN)
+
+
+def _condition_state(sample: StateSignalValue) -> ConditionState:
+    if not _trusted(sample):
+        return ConditionState.UNKNOWN
+    return {
+        InterpretedState.OK: ConditionState.OK,
+        InterpretedState.FAULT: ConditionState.FAULT,
+    }.get(sample.interpreted_state, ConditionState.UNKNOWN)
+
+
+def _component(prefix: str, signals: dict[LogicalStateSignal, StateSignalValue]) -> ComponentStatus:
+    members = {
+        "state": LogicalStateSignal(f"{prefix}.state"),
+        "ready": LogicalStateSignal(f"{prefix}.ready"),
+        "rectifier": LogicalStateSignal(f"{prefix}.rectifier"),
+        "converter": LogicalStateSignal(f"{prefix}.converter"),
+        "protection": LogicalStateSignal(f"{prefix}.protection"),
+    }
+    return ComponentStatus(
+        state=_component_state(signals[members["state"]]),
+        ready=_condition_state(signals[members["ready"]]),
+        rectifier=_component_state(signals[members["rectifier"]]),
+        converter=_component_state(signals[members["converter"]]),
+        protection=_condition_state(signals[members["protection"]]),
+        signals={name: signals[signal] for name, signal in members.items()},
+    )
+
+
+def _coverage(signals: dict[LogicalStateSignal, StateSignalValue]) -> MappingCoverage:
+    mapped = sum(sample.mapped for sample in signals.values())
+    trustworthy = sum(_trusted(sample) for sample in signals.values())
+    return MappingCoverage(
+        total=len(LogicalStateSignal),
+        mapped=mapped,
+        trustworthy=trustworthy,
+        complete=mapped == len(LogicalStateSignal) and trustworthy == len(LogicalStateSignal),
+        missing=[signal.value for signal, sample in signals.items() if not sample.mapped],
+    )
+
+
+def _machine_state(
+    source: DataSource,
+    monitor: OPCUAMonitor | None,
+    data_state: DataState,
+) -> dict[LogicalStateSignal, StateSignalValue]:
+    configured = {}
+    node_map = getattr(monitor, "node_map", None)
+    if node_map is not None:
+        configured = node_map.states_by_signal()
+
+    observed = {}
+    view = monitor.view() if monitor is not None else None
+    if view is not None and view.snapshot is not None:
+        machine_state = getattr(view.snapshot, "machine_state", None)
+        if machine_state is not None:
+            observed = machine_state.signals
+
+    result: dict[LogicalStateSignal, StateSignalValue] = {}
+    for signal in LogicalStateSignal:
+        mapping = configured.get(signal)
+        sample = observed.get(signal.value)
+        if sample is None:
+            sample = _unknown_signal(
+                signal,
+                source,
+                mapped=mapping is not None,
+                display_name=mapping.label if mapping is not None else None,
+                group=mapping.display_group if mapping is not None else None,
+                severity=mapping.alarm_severity if mapping is not None else None,
+            )
+        result[signal] = _effective_signal(sample, data_state)
+    return result
 
 
 def get_system_status(
@@ -39,30 +164,87 @@ def get_system_status(
     monitor: OPCUAMonitor | None = None,
 ) -> SystemStatus:
     settings = settings or get_settings()
-    interlocks = [
-        InterlockStatus(group=group, name=name, state=ConditionState.UNKNOWN)
-        for group, names in INTERLOCK_GROUPS.items()
-        for name in names
-    ]
     if settings.app_mode.value == "simulation":
         source = DataSource.SIMULATION
         connection_state = ConnectionState.SIMULATED
         data_state = DataState.LIVE
-        overall_state = OverallState.SIMULATION
         last_connection_attempt = None
         last_successful_read = None
         monitor_error = None
     else:
         view = monitor.view() if monitor is not None else None
         source = DataSource.OPCUA
-        connection_state = (
-            view.connection_state if view is not None else ConnectionState.ERROR
-        )
+        connection_state = view.connection_state if view is not None else ConnectionState.ERROR
         data_state = view.data_state if view is not None else DataState.UNAVAILABLE
-        overall_state = OverallState.UNKNOWN
         last_connection_attempt = view.last_connection_attempt if view is not None else None
         last_successful_read = view.last_successful_read if view is not None else None
         monitor_error = view.error if view is not None else "OPC UA monitor is unavailable"
+
+    signals = _machine_state(source, monitor, data_state)
+    coverage = _coverage(signals)
+    cps = _component("cps", signals)
+    aps = _component("aps", signals)
+
+    interlocks = [
+        InterlockStatus(
+            logical_name=signal.value,
+            group=sample.group,
+            name=sample.display_name,
+            state=_condition_state(sample),
+            signal=sample,
+        )
+        for signal, sample in signals.items()
+        if state_signal_kind(signal) == StateSignalKind.INTERLOCK
+    ]
+
+    alarm_signals = [
+        sample
+        for signal, sample in signals.items()
+        if state_signal_kind(signal) == StateSignalKind.ALARM
+    ]
+    active = [
+        AlarmStatus(
+            code=sample.logical_name,
+            message=sample.display_name,
+            severity=sample.severity,
+            signal=sample,
+        )
+        for sample in alarm_signals
+        if _trusted(sample) and sample.interpreted_state == InterpretedState.ACTIVE
+    ]
+    alarms_complete = all(_trusted(sample) for sample in alarm_signals)
+    if active:
+        alarm_state = ConditionState.FAULT
+        alarm_monitoring_state = AlarmMonitoringState.ACTIVE
+    elif alarms_complete:
+        alarm_state = ConditionState.OK
+        alarm_monitoring_state = AlarmMonitoringState.NO_ACTIVE
+    elif data_state == DataState.UNAVAILABLE:
+        alarm_state = ConditionState.UNKNOWN
+        alarm_monitoring_state = AlarmMonitoringState.UNAVAILABLE
+    else:
+        alarm_state = ConditionState.UNKNOWN
+        alarm_monitoring_state = AlarmMonitoringState.INCOMPLETE
+    alarms = AlarmSummary(
+        state=alarm_state,
+        monitoring_state=alarm_monitoring_state,
+        active=active,
+        signals=alarm_signals,
+    )
+
+    confirmed_fault = any(
+        _trusted(sample)
+        and sample.interpreted_state in {InterpretedState.FAULT, InterpretedState.ACTIVE}
+        for sample in signals.values()
+    )
+    if settings.app_mode.value == "simulation":
+        overall_state = OverallState.SIMULATION
+    elif confirmed_fault:
+        overall_state = OverallState.FAULT
+    elif coverage.complete:
+        overall_state = OverallState.NOMINAL
+    else:
+        overall_state = OverallState.UNKNOWN
 
     return SystemStatus(
         mode=settings.app_mode,
@@ -70,10 +252,11 @@ def get_system_status(
         connection_state=connection_state,
         data_state=data_state,
         overall_state=overall_state,
-        cps=_unknown_component(),
-        aps=_unknown_component(),
+        cps=cps,
+        aps=aps,
         interlocks=interlocks,
-        alarms=AlarmSummary(state=ConditionState.UNKNOWN, active=[]),
+        alarms=alarms,
+        coverage=coverage,
         timestamp=datetime.now(timezone.utc),
         last_connection_attempt=last_connection_attempt,
         last_successful_read=last_successful_read,

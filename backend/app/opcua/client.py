@@ -8,8 +8,23 @@ from urllib.parse import urlsplit
 from asyncua import Client
 
 from app.core.config import OPCUASettings
-from app.models import ConnectionState, SignalQuality, SignalValue
-from app.opcua.node_map import ExpectedType, LogicalSignal, NodeMapping
+from app.models import (
+    ConnectionState,
+    DataSource,
+    DataState,
+    InterpretedState,
+    SignalQuality,
+    SignalValue,
+    StateSignalValue,
+)
+from app.opcua.node_map import (
+    ExpectedType,
+    LogicalSignal,
+    LogicalStateSignal,
+    NodeMapping,
+    StateExpectedType,
+    StateNodeMapping,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +69,33 @@ def _normalize_value(raw: Any, mapping: NodeMapping) -> float:
     elif not isinstance(raw, float):
         raise TypeError("OPC UA value is not the configured floating-point type")
     return float(raw) * mapping.scale + mapping.offset
+
+
+def _normalize_state_value(raw: Any, mapping: StateNodeMapping) -> bool | int:
+    if mapping.expected_type == StateExpectedType.BOOLEAN:
+        if not isinstance(raw, bool):
+            raise TypeError("OPC UA value is not the configured boolean type")
+        return raw
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise TypeError("OPC UA value is not the configured integer type")
+    return raw
+
+
+def _unavailable_state(mapping: StateNodeMapping, observed_at: datetime) -> StateSignalValue:
+    return StateSignalValue(
+        logical_name=mapping.signal.value,
+        display_name=mapping.label,
+        group=mapping.display_group,
+        mapped=True,
+        raw_value=None,
+        interpreted_state=InterpretedState.UNKNOWN,
+        quality=SignalQuality.UNAVAILABLE,
+        source_timestamp=None,
+        observed_at=observed_at,
+        source=DataSource.OPCUA,
+        data_state=DataState.UNAVAILABLE,
+        severity=mapping.alarm_severity,
+    )
 
 
 class ReadOnlyOPCUAClient:
@@ -212,4 +254,81 @@ class ReadOnlyOPCUAClient:
                 )
             else:
                 values[mapping.signal] = result
+        return values
+
+    async def read_state_signal(self, mapping: StateNodeMapping) -> StateSignalValue:
+        client = self._client
+        if not self.connected or client is None:
+            raise OPCUAReadError("OPC UA client is not connected")
+        observed_at = datetime.now(timezone.utc)
+        try:
+            node = client.get_node(mapping.node_id)
+            data_value = await asyncio.wait_for(
+                node.read_data_value(raise_on_bad_status=False),
+                timeout=self.settings.read_timeout_seconds,
+            )
+            observed_at = datetime.now(timezone.utc)
+        except Exception as exc:
+            raise OPCUAReadError("OPC UA state signal read failed") from exc
+
+        quality = _quality(data_value.StatusCode)
+        timestamp = _source_timestamp(data_value.SourceTimestamp)
+        if quality in {SignalQuality.BAD, SignalQuality.UNAVAILABLE}:
+            return _unavailable_state(mapping, observed_at).model_copy(
+                update={"quality": quality, "source_timestamp": timestamp}
+            )
+
+        raw = data_value.Value.Value if data_value.Value is not None else None
+        try:
+            normalized = _normalize_state_value(raw, mapping)
+        except (TypeError, ValueError, OverflowError):
+            return _unavailable_state(mapping, observed_at).model_copy(
+                update={
+                    "quality": SignalQuality.BAD,
+                    "source_timestamp": timestamp,
+                    "data_state": DataState.DEGRADED,
+                }
+            )
+
+        interpreted = (
+            mapping.interpret(normalized)
+            if quality == SignalQuality.GOOD
+            else InterpretedState.UNKNOWN
+        )
+        return StateSignalValue(
+            logical_name=mapping.signal.value,
+            display_name=mapping.label,
+            group=mapping.display_group,
+            mapped=True,
+            raw_value=normalized,
+            interpreted_state=interpreted,
+            quality=quality,
+            source_timestamp=timestamp,
+            observed_at=observed_at,
+            source=DataSource.OPCUA,
+            data_state=(
+                DataState.LIVE
+                if quality == SignalQuality.GOOD and interpreted != InterpretedState.UNKNOWN
+                else DataState.DEGRADED
+            ),
+            severity=mapping.alarm_severity,
+        )
+
+    async def read_state_signals(
+        self,
+        mappings: Iterable[StateNodeMapping],
+    ) -> dict[LogicalStateSignal, StateSignalValue]:
+        ordered = tuple(mappings)
+        results = await asyncio.gather(
+            *(self.read_state_signal(mapping) for mapping in ordered),
+            return_exceptions=True,
+        )
+        observed_at = datetime.now(timezone.utc)
+        values: dict[LogicalStateSignal, StateSignalValue] = {}
+        for mapping, result in zip(ordered, results, strict=True):
+            values[mapping.signal] = (
+                _unavailable_state(mapping, observed_at)
+                if isinstance(result, Exception)
+                else result
+            )
         return values
