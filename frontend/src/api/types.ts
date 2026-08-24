@@ -10,6 +10,8 @@ export type SignalQuality = "good" | "uncertain" | "bad" | "unavailable";
 export type InterpretedState = "on" | "off" | "ok" | "fault" | "active" | "inactive" | "unknown";
 export type AlarmMonitoringState = "active" | "no_active" | "incomplete" | "unavailable";
 export type AlarmSeverity = "info" | "warning" | "critical";
+export type EventCategory = "application" | "monitoring" | "machine_state" | "interlock" | "alarm" | "security" | "operator" | "command";
+export type LogicalCommand = "setpoint.apply" | "cps.rectifier.set" | "cps.converter.set" | "aps.rectifier.set" | "aps.converter.set" | "protection.reset" | "interlock.reset" | "emergency.shutdown";
 
 export interface SessionUser {
   username: string;
@@ -116,4 +118,38 @@ export interface UserRecord {
 
 export interface UsersResponse {
   users: UserRecord[];
+}
+
+export interface EventRecord {
+  id: number;
+  recorded_at: string;
+  source_timestamp: string | null;
+  category: EventCategory;
+  event_type: string;
+  source: string;
+  severity: AlarmSeverity | null;
+  actor: string | null;
+  target: string | null;
+  message: string;
+  details: Record<string, unknown>;
+  correlation_id: string | null;
+}
+
+export interface EventListResponse {
+  events: EventRecord[];
+  next_before_id: number | null;
+  store_available: boolean;
+}
+
+export interface CommandCapability {
+  command: LogicalCommand;
+  target: string;
+  available: false;
+  blockers: string[];
+  reasons: string[];
+}
+
+export interface CommandCapabilitiesResponse {
+  capabilities: CommandCapability[];
+  execution_available: false;
 }

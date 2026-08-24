@@ -35,10 +35,14 @@ import { api, ApiError } from "@/api/client";
 import type {
   ComponentState,
   ComponentStatus,
+  CommandCapability,
   ConditionState,
   ConnectionState,
   DataState,
+  EventCategory,
+  EventRecord,
   InterlockStatus,
+  LogicalCommand,
   OverallState,
   SessionUser,
   SignalQuality,
@@ -205,6 +209,14 @@ function ComponentIndicator({ label, state, signal }: { label: string; state: Di
       <SignalDetail signal={signal} />
     </div>
   );
+}
+
+
+function capabilityReason(capabilities: CommandCapability[], command: LogicalCommand): string {
+  const capability = capabilities.find((item) => item.command === command);
+  return capability
+    ? `Unavailable: ${capability.reasons[0]}`
+    : "Unavailable: backend command capability could not be verified";
 }
 
 
@@ -412,7 +424,7 @@ function Dashboard({
 }
 
 
-function PowerTab({ status }: { status: SystemStatus | null }) {
+function PowerTab({ status, capabilities }: { status: SystemStatus | null; capabilities: CommandCapability[] }) {
   const [pulse, setPulse] = useState(2.5);
   const [vcath, setVcath] = useState(6.0);
   const [vanode, setVanode] = useState(5.0);
@@ -443,7 +455,7 @@ function PowerTab({ status }: { status: SystemStatus | null }) {
             <div id="setpoint-anode"><Slider value={[vanode]} onValueChange={(value) => setVanode(value[0])} min={0} max={10} step={0.1} /></div>
           </Labeled>
           <div className="flex gap-3 pt-2">
-            <Button id="apply-setpoints" className="rounded-2xl" disabled title="Unavailable in this read-only application">Apply Setpoints</Button>
+            <Button id="apply-setpoints" className="rounded-2xl" disabled title={capabilityReason(capabilities, "setpoint.apply")}>Apply Setpoints</Button>
             <Button variant="outline" className="rounded-2xl" onClick={resetRequestedValues}>Revert requested edits</Button>
           </div>
           <div className="text-xs text-slate-500">Actual pulse, cathode, and anode values: UNAVAILABLE</div>
@@ -451,15 +463,17 @@ function PowerTab({ status }: { status: SystemStatus | null }) {
       </Card>
 
       <div className="grid grid-cols-1 gap-4">
-        <PowerCommands title="CPS Commands" component={cps} prefix="cps" />
-        <PowerCommands title="APS Commands" component={aps} prefix="aps" />
+        <PowerCommands title="CPS Commands" component={cps} prefix="cps" capabilities={capabilities} />
+        <PowerCommands title="APS Commands" component={aps} prefix="aps" capabilities={capabilities} />
       </div>
     </div>
   );
 }
 
 
-function PowerCommands({ title, component, prefix }: { title: string; component: ComponentStatus; prefix: "cps" | "aps" }) {
+function PowerCommands({ title, component, prefix, capabilities }: { title: string; component: ComponentStatus; prefix: "cps" | "aps"; capabilities: CommandCapability[] }) {
+  const rectifierCommand: LogicalCommand = prefix === "cps" ? "cps.rectifier.set" : "aps.rectifier.set";
+  const converterCommand: LogicalCommand = prefix === "cps" ? "cps.converter.set" : "aps.converter.set";
   return (
     <Card className="rounded-2xl">
       <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Power className="size-4" /> {title}</CardTitle></CardHeader>
@@ -467,21 +481,21 @@ function PowerCommands({ title, component, prefix }: { title: string; component:
         <div className="text-xs font-medium text-amber-800">Commands disabled — read-only application</div>
         <Labeled label="Power Rectifier">
           <div id={`${prefix}-rectifier`} className="flex items-center gap-3">
-            <Switch checked={component.rectifier === "on"} disabled aria-label={`${title} power rectifier read-only indication`} />
+            <Switch checked={component.rectifier === "on"} disabled title={capabilityReason(capabilities, rectifierCommand)} aria-label={`${title} power rectifier read-only indication`} />
             <StateBadge state={component.rectifier} />
           </div>
           <SignalDetail signal={component.signals.rectifier} />
         </Labeled>
         <Labeled label="Charging Converter">
           <div id={`${prefix}-converter`} className="flex items-center gap-3">
-            <Switch checked={component.converter === "on"} disabled aria-label={`${title} charging converter read-only indication`} />
+            <Switch checked={component.converter === "on"} disabled title={capabilityReason(capabilities, converterCommand)} aria-label={`${title} charging converter read-only indication`} />
             <StateBadge state={component.converter} />
           </div>
           <SignalDetail signal={component.signals.converter} />
         </Labeled>
         <div className="flex gap-3 pt-2">
-          <Button className="rounded-2xl" variant="secondary" disabled title="Unavailable in this read-only application">Protection Reset</Button>
-          <Button className="rounded-2xl" variant="outline" disabled title="Unavailable in this read-only application">Apply</Button>
+          <Button className="rounded-2xl" variant="secondary" disabled title={capabilityReason(capabilities, "protection.reset")}>Protection Reset</Button>
+          <Button className="rounded-2xl" variant="outline" disabled title={capabilityReason(capabilities, converterCommand)}>Apply</Button>
         </div>
       </CardContent>
     </Card>
@@ -489,7 +503,7 @@ function PowerCommands({ title, component, prefix }: { title: string; component:
 }
 
 
-function SafetyTab({ status }: { status: SystemStatus | null }) {
+function SafetyTab({ status, capabilities }: { status: SystemStatus | null; capabilities: CommandCapability[] }) {
   const groups = status?.interlocks.reduce<Record<string, InterlockStatus[]>>((result, item) => {
     (result[item.group] ??= []).push(item);
     return result;
@@ -557,8 +571,8 @@ function SafetyTab({ status }: { status: SystemStatus | null }) {
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
             No reset or shutdown command is implemented. Physical and PLC safety systems remain authoritative.
           </div>
-          <Button className="rounded-2xl w-full" variant="secondary" disabled title="Unavailable in this read-only application">Reset Interlocks</Button>
-          <Button className="rounded-2xl w-full" variant="destructive" disabled title="No real shutdown command is available">Emergency Shutdown — unavailable</Button>
+          <Button className="rounded-2xl w-full" variant="secondary" disabled title={capabilityReason(capabilities, "interlock.reset")}>Reset Interlocks</Button>
+          <Button className="rounded-2xl w-full" variant="destructive" disabled title={capabilityReason(capabilities, "emergency.shutdown")}>Emergency Shutdown — unavailable</Button>
         </CardContent>
       </Card>
     </div>
@@ -711,30 +725,89 @@ function StartupWizard({ goTo, status }: { goTo: (tab: string, id?: string) => v
 }
 
 
-function LogsTab() {
-  const rows = [
-    { t: "12:02:41", m: "CPS Rectifier ON" },
-    { t: "12:03:02", m: "CPS Converter ON" },
-    { t: "12:03:15", m: "Apply setpoints (2.5ms / 6.0V / 5.0V)" },
-    { t: "12:07:11", m: "ARC detected on APS – protection active" },
-  ];
+function LogsTab({ enabled, onUnauthorized }: { enabled: boolean; onUnauthorized: () => void }) {
+  const [events, setEvents] = useState<EventRecord[]>([]);
+  const [nextBeforeId, setNextBeforeId] = useState<number | null>(null);
+  const [category, setCategory] = useState<EventCategory | "">("");
+  const [severity, setSeverity] = useState<"" | "info" | "warning" | "critical">("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadEvents = useCallback(async (beforeId?: number) => {
+    setLoading(true);
+    try {
+      const response = await api.getEvents({
+        limit: 50,
+        beforeId,
+        category: category || undefined,
+        severity: severity || undefined,
+      });
+      setEvents((current) => beforeId
+        ? [...current, ...response.events.filter((event) => !current.some((item) => item.id === event.id))]
+        : response.events);
+      setNextBeforeId(response.next_before_id);
+      setError(null);
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 401) {
+        onUnauthorized();
+      } else {
+        setError(caught instanceof ApiError ? caught.message : "Event history is unavailable.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [category, severity, onUnauthorized]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void loadEvents();
+    const timer = setInterval(() => void loadEvents(), 5000);
+    return () => clearInterval(timer);
+  }, [enabled, loadEvents]);
+
   return (
     <Card className="rounded-2xl">
-      <CardHeader className="pb-2"><CardTitle className="text-base">Event Log — demonstration data</CardTitle></CardHeader>
-      <CardContent>
-        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-          These rows are static examples and are not current system or operator events.
+      <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3">
+        <CardTitle className="text-base">Backend-observed Event History</CardTitle>
+        <Button variant="outline" size="sm" disabled={loading} onClick={() => void loadEvents()}>Refresh</Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-xs text-blue-900">
+          Persistent application event history. This records what the backend observed; it is not a complete PLC or safety historian.
         </div>
-        <div className="grid grid-cols-12 text-xs uppercase text-muted-foreground mb-2">
-          <div className="col-span-2">Time</div><div className="col-span-10">Message</div>
+        <div className="flex flex-wrap gap-3">
+          <select className="rounded-lg border bg-white px-3 py-2 text-sm" value={category} onChange={(event) => setCategory(event.target.value as EventCategory | "")}>
+            <option value="">All categories</option>
+            {(["application", "monitoring", "machine_state", "interlock", "alarm", "security", "operator", "command"] as EventCategory[]).map((value) => (
+              <option key={value} value={value}>{value.replace("_", " ")}</option>
+            ))}
+          </select>
+          <select className="rounded-lg border bg-white px-3 py-2 text-sm" value={severity} onChange={(event) => setSeverity(event.target.value as typeof severity)}>
+            <option value="">All severities</option>
+            <option value="info">Info</option>
+            <option value="warning">Warning</option>
+            <option value="critical">Critical</option>
+          </select>
         </div>
+        {error && <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900" role="alert">{error}</div>}
+        {!error && loading && events.length === 0 && <div className="text-sm text-slate-500">Loading event history…</div>}
+        {!error && !loading && events.length === 0 && <div className="text-sm text-slate-500">No backend-observed events match these filters.</div>}
         <div className="space-y-2">
-          {rows.map((row, index) => (
-            <div key={index} className="grid grid-cols-12 items-center text-sm bg-muted/30 rounded-xl px-3 py-2">
-              <div className="col-span-2 font-mono">{row.t}</div><div className="col-span-10">{row.m}</div>
+          {events.map((event) => (
+            <div key={event.id} className="grid grid-cols-1 gap-2 rounded-xl border bg-muted/20 px-3 py-3 md:grid-cols-12 md:items-center">
+              <div className="text-xs font-mono text-slate-600 md:col-span-2">{new Date(event.recorded_at).toLocaleString()}</div>
+              <div className="md:col-span-2"><Badge variant="outline">{event.category.replace("_", " ").toUpperCase()}</Badge></div>
+              <div className="text-sm md:col-span-6">
+                <div className="font-medium">{event.message}</div>
+                <div className="text-xs text-slate-500">{event.actor ? `Actor: ${event.actor}` : `Source: ${event.source}`}{event.target ? ` · ${event.target}` : ""}</div>
+              </div>
+              <div className="md:col-span-2 md:text-right">{event.severity ? <Badge variant="outline">{event.severity.toUpperCase()}</Badge> : "—"}</div>
             </div>
           ))}
         </div>
+        {nextBeforeId && (
+          <Button variant="outline" disabled={loading} onClick={() => void loadEvents(nextBeforeId)}>Load older events</Button>
+        )}
       </CardContent>
     </Card>
   );
@@ -746,6 +819,7 @@ export default function GyrotronAdamDashboard() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [tab, setTab] = useState("dashboard");
+  const [commandCapabilities, setCommandCapabilities] = useState<CommandCapability[]>([]);
 
   const handleUnauthorized = useCallback(() => {
     setUser(null);
@@ -754,6 +828,17 @@ export default function GyrotronAdamDashboard() {
 
   const telemetry = useTelemetry(user !== null, handleUnauthorized);
   const system = useSystemStatus(user !== null, handleUnauthorized);
+
+  useEffect(() => {
+    if (!user) return;
+    const controller = new AbortController();
+    api.getCommandCapabilities(controller.signal)
+      .then((response) => setCommandCapabilities(response.capabilities))
+      .catch((caught) => {
+        if (caught instanceof ApiError && caught.status === 401) handleUnauthorized();
+      });
+    return () => controller.abort();
+  }, [user, handleUnauthorized]);
 
   useEffect(() => {
     let active = true;
@@ -874,12 +959,12 @@ export default function GyrotronAdamDashboard() {
               lastSuccessfulAt={telemetry.lastSuccessfulAt}
             />
           </TabsContent>
-          <TabsContent value="power"><PowerTab status={authoritativeStatus} /></TabsContent>
+          <TabsContent value="power"><PowerTab status={authoritativeStatus} capabilities={user ? commandCapabilities : []} /></TabsContent>
           <TabsContent value="monitoring"><MonitoringTab data={telemetry.data} latest={telemetry.latest} dataState={telemetry.dataState} /></TabsContent>
           <TabsContent value="flow"><PowerFlowTab /></TabsContent>
-          <TabsContent value="safety"><SafetyTab status={authoritativeStatus} /></TabsContent>
+          <TabsContent value="safety"><SafetyTab status={authoritativeStatus} capabilities={user ? commandCapabilities : []} /></TabsContent>
           <TabsContent value="startup"><StartupWizard goTo={goTo} status={authoritativeStatus} /></TabsContent>
-          <TabsContent value="logs"><LogsTab /></TabsContent>
+          <TabsContent value="logs"><LogsTab enabled={tab === "logs"} onUnauthorized={handleUnauthorized} /></TabsContent>
           {user.role === "admin" && <TabsContent value="admin"><AdminTab /></TabsContent>}
         </Tabs>
       </main>

@@ -2,10 +2,10 @@
 
 ## 1. System Architecture
 
-The Gyrotron Control System is a full-stack HMI foundation for monitoring a high-power gyrotron installation. Phase 3 extends the explicitly read-only OPC UA boundary with authoritative PLC-derived CPS, APS, interlock, protection, and alarm state. It does not provide hardware control.
+The Gyrotron Control System is a full-stack HMI foundation for monitoring a high-power gyrotron installation. Phase 4 adds persistent application event history and an explicit, disabled-by-default future command contract to the Phase 3 read-only OPC UA monitoring boundary. It does not provide hardware control.
 
 - **Frontend**: A React-based Single Page Application (SPA) providing a modern, responsive user interface for operators. It handles real-time data visualization, control inputs, and operational workflows.
-- **Backend**: A FastAPI (Python) server that owns authentication, typed status, simulated telemetry, and the read-only OPC UA monitoring lifecycle.
+- **Backend**: A FastAPI (Python) server that owns authentication, typed status, simulated telemetry, persistent application event history, future command capability reporting, and the read-only OPC UA monitoring lifecycle.
 - **PLC boundary**: One `asyncua` client reads configured telemetry and state nodes into one in-process typed snapshot/cache. It exposes no write method. Simulation remains the default and never creates an OPC UA client.
 
 The authoritative path is:
@@ -15,7 +15,8 @@ PLC OPC UA server
 → read-only typed telemetry/state mappings
 → one reconnecting monitor/cache
 → authoritative system snapshot
-→ authenticated FastAPI APIs
+→ transition detector and append-oriented application event history
+→ authenticated FastAPI monitoring/event/capability APIs
 → React HMI
 ```
 
@@ -34,11 +35,14 @@ graph LR
     subgraph Backend ["Backend Layer"]
         direction TB
         API[FastAPI Server]
-        Safety[Safety Logic]
+        Events[Application Event History]
+        Contracts[Disabled Future Command Contracts]
         OPC[Read-only OPC UA Monitor / Cache]
 
-        API <-->|Internal| Safety
+        API <-->|Query / append| Events
+        API <-->|Unavailable capabilities| Contracts
         API <-->|Cached typed snapshots| OPC
+        OPC -->|Observe cached transitions| Events
     end
 
     %% Hardware Control Layer
@@ -56,7 +60,7 @@ graph LR
 
     %% Styling
     classDef box fill:#ffffff,stroke:#333,stroke-width:1px,rx:5,ry:5;
-    class UI,API,Safety,OPC,PLC,Gyrotron box;
+    class UI,API,Events,Contracts,OPC,PLC,Gyrotron box;
     classDef person fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
     class Operator person;
     
@@ -90,7 +94,15 @@ The backend is built with **FastAPI** and served by **Uvicorn**.
 
 - **`POST /api/setpoint`** (authenticated)
     - Reserved for the future command boundary.
-    - Always returns `503 Service Unavailable`; no write is performed in either mode.
+    - Records a rejected command attempt when history is available and always returns `503 Service Unavailable`; no write is performed in either mode.
+
+- **`GET /api/events`** (authenticated)
+    - Returns a bounded, newest-first page from persistent application event history.
+    - Supports `before_id` pagination and category, severity, type, and actor filters. There is no event update or delete API.
+
+- **`GET /api/command-capabilities`** (authenticated)
+    - Returns future logical command contracts and their unresolved commissioning blockers.
+    - Every capability is unavailable. The endpoint is descriptive only and cannot execute, enable, acknowledge, or simulate a command.
 
 - **Authentication endpoints**
     - `POST /api/login` performs the LDAP check and creates an opaque server-side application session.
@@ -119,6 +131,8 @@ The frontend is a **Vite + React 19** application using **TypeScript**. It utili
 - **Power Control**: Requested setpoints may be drafted locally, but Apply and all hardware controls are disabled in both modes. Backend status remains separate from requested values.
 - **Safety Monitor**: Renders backend-authoritative interlock and alarm observations, including mapping, quality, freshness, and configured severity. It never renders unknown, stale, uncertain, or unavailable state as green/OK.
 - **Alarm presentation**: Distinguishes confirmed active alarms, confirmed no active alarms, incomplete coverage, and unavailable monitoring. `No active alarms` appears only when every supported alarm signal is mapped, fresh, good-quality, and explicitly inactive.
+- **Event Log**: Reads real backend application events with bounded pagination and category/severity filters. It is not a PLC, safety-rated, certified, or cryptographically tamper-proof historian.
+- **Future command controls**: Disabled control tooltips use backend capability blockers. Slider limits remain presentation-only draft limits and are not approved machine constraints.
 
 ### 3.2 State Management
 - **Telemetry**: Managed via a custom hook `useTelemetry` that polls the backend and maintains a rolling buffer of the last 40 data points for charting.
@@ -155,6 +169,7 @@ This application is not a safety-rated system and does not replace PLC or physic
 ### Configuration
 - Backend runs on default port `8000`.
 - `backend/.env` is loaded and validated at startup. `APP_MODE=simulation` is the default; `APP_MODE=opcua_readonly` enables only the read monitor. Unsupported modes fail startup.
+- `EVENT_DB_PATH` selects the application event-history database; relative paths are anchored to `backend/`.
 - Frontend and nginx preserve the `/api/...` prefix when proxying to FastAPI.
 - Simulation does not create or contact an OPC UA client.
 
@@ -205,11 +220,27 @@ For secure OPC UA, configure an explicit supported `OPCUA_SECURITY_POLICY`, `OPC
 - One bad node degrades only that signal; unrelated good observations remain usable. Connection loss immediately makes cached state stale and removes trusted positive indications, then makes it unavailable after the configured threshold.
 - Reconnect attempts are monitor-owned and use bounded exponential backoff. Frontend HTTP polling never drives OPC UA connection attempts.
 
+### Persistent application event history
+
+The backend owns one append-oriented SQLite event store, configured by `EVENT_DB_PATH` (default `backend/data/events.sqlite3`). Runtime database, WAL, and shared-memory files are ignored by git. Initialization and write failures are logged clearly; monitoring and authentication continue, while event queries return `503` instead of inventing history.
+
+Events distinguish the backend `recorded_at` UTC timestamp from an optional PLC `source_timestamp`. Categories cover application lifecycle, monitoring, machine state, interlocks, alarms, security, operator activity, and rejected/future command activity. Login outcomes, logout, administrator user changes, application lifecycle, monitoring health, trustworthy machine-state transitions, interlock transitions, and alarm activation/clear transitions are recorded without credentials, session identifiers, or authentication tokens.
+
+On observer startup, one baseline event is written rather than synthesizing a transition for every current state. Repeated identical snapshots are deduplicated. Communication loss is recorded once and cannot fabricate a physical transition from values that are stale, unmapped, poor-quality, or uninterpretable. If a trustworthy value differs after a monitoring gap, the event records the newly observed value with `observed_after_gap=true` and `change_time_known=false`; it does not claim when the physical change occurred.
+
 ### Mapping coverage and overall state
 
 The Phase 3 logical contract contains CPS/APS overall, ready, rectifier, converter, and protection signals; environment/supply/cryo interlocks; and four alarm concepts. `/api/status.coverage` reports total, mapped, trustworthy, complete, and missing logical names.
 
 A confirmed fresh, good-quality mapped fault or active alarm may produce `overall_state=fault`, even if another unrelated signal is missing. `overall_state=nominal` requires the entire supported state contract to be mapped and trustworthy with no interpreted fault/active value. Partial or degraded coverage therefore produces `unknown`. This is an HMI monitoring summary, never a “safe to operate” assertion.
+
+### Future command contract boundary
+
+Phase 4 defines logical contracts for setpoint application, CPS/APS rectifier and converter control, protection/interlock reset, and emergency shutdown. These are reviewable schemas and capability diagnostics only: there is no command executor, OPC UA writer, queue, retry worker, or enable flag. Every capability remains fail-closed and unavailable while any production prerequisite is unresolved.
+
+A future command transaction would need to follow this boundary: request → server-side authentication and authorization → approved command contract → fresh authoritative machine-state/precondition check → durable intent record (fail closed if mandatory audit is unavailable) → exact approved PLC write → explicit PLC readback/acknowledgement → durable result record → operator result. An HTTP `200` following a write request would not, by itself, prove command success.
+
+Production commissioning must separately approve exact write and readback/acknowledgement NodeIds and PLC types; ranges, engineering units, scaling, tolerance, settling and polarity; pulse/hold semantics for resets; role and confirmation policy; state/interlock/alarm preconditions; timing, timeout, failure and network-loss semantics; retry and idempotency rules; and mandatory audit behavior. Emergency shutdown semantics and whether software initiation is appropriate require explicit controls and safety engineering approval. Nothing in the template supplies or infers these facts.
 
 ### Local simulator tests
 
@@ -217,7 +248,7 @@ The backend integration suite starts an `asyncua` server bound only to `127.0.0.
 
 ### Production information still required
 
-Controls/PLC engineering must supply and approve the production endpoint, namespace indexes/URIs, PLC data types, engineering units/scaling, sampling requirements, security policy, certificates/trust requirements, and authentication requirements. No production state mapping is known in this repository. Required commissioning information includes CPS/APS state, ready, rectifier, converter and protection NodeIds/types/semantics; all environment, supply and cryo interlock NodeIds and polarity; all alarm NodeIds, polarity, severity and any latching semantics; and any integer enum meanings. Command, reset, emergency, and acknowledgement nodes are outside Phase 3 and must not be added to this read-only map.
+Controls/PLC engineering must supply and approve the production endpoint, namespace indexes/URIs, PLC data types, engineering units/scaling, sampling requirements, security policy, certificates/trust requirements, and authentication requirements. No production state or command mapping is known in this repository. Required monitoring information includes CPS/APS state, ready, rectifier, converter and protection NodeIds/types/semantics; all environment, supply and cryo interlock NodeIds and polarity; all alarm NodeIds, polarity, severity and any latching semantics; and any integer enum meanings. Future command/reset/emergency/write/readback/acknowledgement nodes belong only in a separately approved production command contract and must not be added to the Phase 3 read-only map.
 
 ### Tests
 
@@ -241,14 +272,16 @@ npm run build
 
 | File | Purpose |
 | :--- | :--- |
-| `main.py` | **Application Entry Point**. Initializes FastAPI and owns monitor startup/shutdown through lifespan. |
-| `api/endpoints.py` | **API Routes**. Defines the HTTP endpoints for telemetry (`/telemetry`), status (`/status`), and control (`/setpoint`). Contains the route logic. |
+| `main.py` | **Application Entry Point**. Initializes FastAPI and owns event store, observer, and monitor startup/shutdown through lifespan. |
+| `api/endpoints.py` | **API Routes**. Defines monitoring, event history, unavailable command-capability, authentication, and user administration endpoints. |
 | `core/safety.py` | **Safety Boundary Marker**. Explicitly documents that no safety decision or command is implemented. |
 | `core/auth.py` | **Authentication Service**. Implements LDAP/Active Directory authentication logic to verify user credentials. |
 | `core/users.py` | **User Management**. Manages user roles and permissions (e.g., Operator vs. Admin). |
 | `opcua/client.py` | **Read-only OPC UA Client**. Handles bounded connection, disconnection and typed reads only. |
 | `opcua/node_map.py` | Validates telemetry/state mappings, expected types, explicit interpretation, presentation metadata, and production protections. |
 | `opcua/monitor.py` | Owns reconnect behavior and the single cached typed telemetry/machine-state snapshot. |
+| `events/` | Append-oriented SQLite event storage and deduplicating trusted-state transition detection. |
+| `commands/` | Future logical command schemas and fail-closed capability blocker evaluation; contains no executor. |
 
 ### 6.2 Frontend (`frontend/src`)
 

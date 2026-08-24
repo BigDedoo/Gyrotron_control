@@ -4,10 +4,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import endpoints
+from app.core.config import get_settings
 from app.core import users as users_module
 from app.core.sessions import session_manager
 from app.core.users import UserManager
-from app.main import app
+from app.main import create_app
 from app.models import UserRole
 
 
@@ -30,9 +31,13 @@ def user_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> UserManager
 
 
 @pytest.fixture
-def client(user_manager: UserManager) -> TestClient:
+def client(user_manager: UserManager, tmp_path: Path):
     del user_manager
-    return TestClient(app)
+    settings = get_settings().model_copy(
+        update={"event_db_path": tmp_path / "events.sqlite3"}
+    )
+    with TestClient(create_app(settings)) as test_client:
+        yield test_client
 
 
 @pytest.fixture

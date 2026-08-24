@@ -8,6 +8,12 @@ venv/
 .coverage
 htmlcov/
 .env
+*.sqlite3
+*.sqlite3-*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
 
 # Node
 node_modules/

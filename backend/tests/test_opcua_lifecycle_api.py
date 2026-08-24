@@ -46,7 +46,7 @@ def _node_map_file(path: Path) -> Path:
     return path
 
 
-def _app_settings(mode: AppMode, opcua=None) -> AppSettings:
+def _app_settings(mode: AppMode, event_db_path: Path, opcua=None) -> AppSettings:
     return AppSettings(
         app_mode=mode,
         cors_origins=("http://localhost:5173",),
@@ -58,6 +58,7 @@ def _app_settings(mode: AppMode, opcua=None) -> AppSettings:
         session_cookie_name="gyro_session",
         session_ttl_seconds=3600,
         session_cookie_secure=False,
+        event_db_path=event_db_path,
         opcua=opcua,
     )
 
@@ -105,12 +106,12 @@ def _authenticated_client(app, user_manager):
     return test_client
 
 
-def test_simulation_lifecycle_never_constructs_an_opcua_client():
+def test_simulation_lifecycle_never_constructs_an_opcua_client(tmp_path: Path):
     def forbidden_factory(_settings, _node_map):
         raise AssertionError("simulation mode attempted to construct an OPC UA monitor")
 
     app = create_app(
-        _app_settings(AppMode.SIMULATION),
+        _app_settings(AppMode.SIMULATION, tmp_path / "events.sqlite3"),
         monitor_factory=forbidden_factory,
     )
     with TestClient(app):
@@ -132,7 +133,7 @@ def test_readonly_lifecycle_starts_cache_and_api_uses_snapshot(tmp_path: Path, u
         )
     )
     app = create_app(
-        _app_settings(AppMode.OPCUA_READONLY, opcua),
+        _app_settings(AppMode.OPCUA_READONLY, tmp_path / "events.sqlite3", opcua),
         monitor_factory=lambda _settings, _node_map: monitor,
     )
 
@@ -164,7 +165,7 @@ def test_readonly_api_returns_explicit_unavailable_without_snapshot(tmp_path: Pa
         )
     )
     app = create_app(
-        _app_settings(AppMode.OPCUA_READONLY, opcua),
+        _app_settings(AppMode.OPCUA_READONLY, tmp_path / "events.sqlite3", opcua),
         monitor_factory=lambda _settings, _node_map: monitor,
     )
     with _authenticated_client(app, user_manager) as client:

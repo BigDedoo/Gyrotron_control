@@ -164,6 +164,7 @@ class AppSettings(BaseModel):
     session_cookie_name: str = Field(min_length=1, max_length=64)
     session_ttl_seconds: int = Field(ge=300, le=86400)
     session_cookie_secure: bool
+    event_db_path: Path = (BACKEND_ROOT / "data" / "events.sqlite3").resolve()
     opcua: OPCUASettings | None = None
 
     @model_validator(mode="after")
@@ -195,6 +196,10 @@ class AppSettings(BaseModel):
             session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "gyro_session").strip(),
             session_ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "28800")),
             session_cookie_secure=_environment_bool("SESSION_COOKIE_SECURE", False),
+            event_db_path=(
+                _configured_path("EVENT_DB_PATH")
+                or (BACKEND_ROOT / "data" / "events.sqlite3").resolve()
+            ),
             opcua=OPCUASettings.from_environment()
             if app_mode == AppMode.OPCUA_READONLY.value
             else None,
