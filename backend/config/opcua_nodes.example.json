@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "purpose": "template",
+  "signals": [
+    {"signal": "ionV", "node_id": "ns=2;s=TestOnly.Gyrotron.ionV", "expected_type": "float", "unit": "V"},
+    {"signal": "ionI", "node_id": "ns=2;s=TestOnly.Gyrotron.ionI", "expected_type": "float", "unit": "A"},
+    {"signal": "heatV", "node_id": "ns=2;s=TestOnly.Gyrotron.heatV", "expected_type": "float", "unit": "V"},
+    {"signal": "heatI", "node_id": "ns=2;s=TestOnly.Gyrotron.heatI", "expected_type": "float", "unit": "A"},
+    {"signal": "heLvl", "node_id": "ns=2;s=TestOnly.Gyrotron.heLvl", "expected_type": "float", "unit": "%"},
+    {"signal": "Thot", "node_id": "ns=2;s=TestOnly.Gyrotron.Thot", "expected_type": "float", "unit": "degC"},
+    {"signal": "Tcold", "node_id": "ns=2;s=TestOnly.Gyrotron.Tcold", "expected_type": "float", "unit": "degC"}
+  ]
+}

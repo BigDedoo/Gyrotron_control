@@ -1,11 +1,12 @@
 export type UserRole = "user" | "admin";
-export type AppMode = "simulation";
-export type DataSource = "simulation";
+export type AppMode = "simulation" | "opcua_readonly";
+export type DataSource = "simulation" | "opcua";
 export type ConnectionState = "simulated" | "disconnected" | "connecting" | "connected" | "error";
-export type DataState = "live" | "stale" | "unavailable";
+export type DataState = "live" | "degraded" | "stale" | "unavailable";
 export type OverallState = "simulation" | "nominal" | "unknown" | "fault";
 export type ComponentState = "on" | "off" | "unknown" | "fault";
 export type ConditionState = "ok" | "fault" | "unknown";
+export type SignalQuality = "good" | "uncertain" | "bad" | "unavailable";
 
 export interface SessionUser {
   username: string;
@@ -13,17 +14,24 @@ export interface SessionUser {
   expires_at: string;
 }
 
+export interface SignalValue {
+  value: number | null;
+  unit: string;
+  quality: SignalQuality;
+  source_timestamp: string | null;
+}
+
 export interface TelemetryPoint {
   timestamp: string;
   source: DataSource;
   sequence: number;
-  ionV: number;
-  ionI: number;
-  heatV: number;
-  heatI: number;
-  heLvl: number;
-  Thot: number;
-  Tcold: number;
+  ionV: SignalValue;
+  ionI: SignalValue;
+  heatV: SignalValue;
+  heatI: SignalValue;
+  heLvl: SignalValue;
+  Thot: SignalValue;
+  Tcold: SignalValue;
 }
 
 export interface ComponentStatus {
@@ -63,6 +71,9 @@ export interface SystemStatus {
   interlocks: InterlockStatus[];
   alarms: AlarmSummary;
   timestamp: string;
+  last_connection_attempt: string | null;
+  last_successful_read: string | null;
+  monitor_error: string | null;
 }
 
 export interface UserRecord {

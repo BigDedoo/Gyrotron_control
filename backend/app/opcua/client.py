@@ -1,23 +1,215 @@
 import asyncio
 import logging
+from collections.abc import Callable, Iterable
+from datetime import datetime, timezone
+from typing import Any
+from urllib.parse import urlsplit
+
+from asyncua import Client
+
+from app.core.config import OPCUASettings
+from app.models import ConnectionState, SignalQuality, SignalValue
+from app.opcua.node_map import ExpectedType, LogicalSignal, NodeMapping
+
 
 logger = logging.getLogger(__name__)
 
-class OPCUAClient:
-    def __init__(self, url="opc.tcp://localhost:4840"):
-        self.url = url
-        self.client = None
-        logger.info(f"Connecting to OPC UA Server (PLC) at {self.url}")
-        
-    async def connect(self):
-        """
-        Connect to the PLC's OPC UA Server.
-        The PLC acts as the server, and this backend application acts as the client.
-        """
-        pass
 
-    async def disconnect(self):
-        pass
+class OPCUAClientError(RuntimeError):
+    pass
 
-    async def read_node(self, node_id: str):
-        pass
+
+class OPCUAConnectionError(OPCUAClientError):
+    pass
+
+
+class OPCUAReadError(OPCUAClientError):
+    pass
+
+
+def _source_timestamp(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _quality(status_code: Any) -> SignalQuality:
+    if status_code is None:
+        return SignalQuality.UNAVAILABLE
+    if status_code.is_good():
+        return SignalQuality.GOOD
+    if status_code.is_uncertain():
+        return SignalQuality.UNCERTAIN
+    return SignalQuality.BAD
+
+
+def _normalize_value(raw: Any, mapping: NodeMapping) -> float:
+    if isinstance(raw, bool):
+        raise TypeError("boolean is not a numeric telemetry value")
+    if mapping.expected_type == ExpectedType.INTEGER:
+        if not isinstance(raw, int):
+            raise TypeError("OPC UA value is not the configured integer type")
+    elif not isinstance(raw, float):
+        raise TypeError("OPC UA value is not the configured floating-point type")
+    return float(raw) * mapping.scale + mapping.offset
+
+
+class ReadOnlyOPCUAClient:
+    """A deliberately read-only OPC UA boundary.
+
+    This class exposes connection lifecycle and typed reads only. Hardware write helpers
+    are intentionally absent.
+    """
+
+    def __init__(
+        self,
+        settings: OPCUASettings,
+        *,
+        client_factory: Callable[[str, float], Client] | None = None,
+    ) -> None:
+        self.settings = settings
+        self._client_factory = client_factory or (lambda url, timeout: Client(url, timeout=timeout))
+        self._client: Client | None = None
+        self.connection_state = ConnectionState.DISCONNECTED
+        self._lifecycle_lock = asyncio.Lock()
+
+    @property
+    def connected(self) -> bool:
+        return self.connection_state == ConnectionState.CONNECTED and self._client is not None
+
+    async def connect(self) -> None:
+        async with self._lifecycle_lock:
+            if self.connected:
+                return
+            await self._disconnect_unlocked()
+            self.connection_state = ConnectionState.CONNECTING
+            endpoint = urlsplit(self.settings.endpoint_url)
+            logger.info("Connecting read-only OPC UA monitor to %s:%s", endpoint.hostname, endpoint.port)
+            client = self._client_factory(
+                self.settings.endpoint_url,
+                self.settings.read_timeout_seconds,
+            )
+            try:
+                if self.settings.security_policy != "None":
+                    certificate = str(self.settings.client_certificate_path)
+                    private_key = str(self.settings.client_private_key_path)
+                    if self.settings.client_private_key_password is not None:
+                        private_key += "::" + self.settings.client_private_key_password.get_secret_value()
+                    security = ",".join(
+                        [
+                            self.settings.security_policy,
+                            self.settings.security_mode,
+                            certificate,
+                            private_key,
+                        ]
+                    )
+                    if self.settings.server_certificate_path is not None:
+                        security += "," + str(self.settings.server_certificate_path)
+                    await client.set_security_string(security)
+                if self.settings.username is not None and self.settings.password is not None:
+                    client.set_user(self.settings.username)
+                    client.set_password(self.settings.password.get_secret_value())
+                await asyncio.wait_for(
+                    client.connect(),
+                    timeout=self.settings.connect_timeout_seconds,
+                )
+            except Exception as exc:
+                self.connection_state = ConnectionState.ERROR
+                try:
+                    await asyncio.wait_for(
+                        client.disconnect(),
+                        timeout=self.settings.connect_timeout_seconds,
+                    )
+                except Exception:
+                    pass
+                logger.warning("Read-only OPC UA connection attempt failed (%s)", type(exc).__name__)
+                raise OPCUAConnectionError("OPC UA connection failed") from exc
+            self._client = client
+            self.connection_state = ConnectionState.CONNECTED
+            logger.info("Read-only OPC UA monitor connected")
+
+    async def disconnect(self) -> None:
+        async with self._lifecycle_lock:
+            await self._disconnect_unlocked()
+
+    async def _disconnect_unlocked(self) -> None:
+        client, self._client = self._client, None
+        self.connection_state = ConnectionState.DISCONNECTED
+        if client is None:
+            return
+        try:
+            await asyncio.wait_for(
+                client.disconnect(),
+                timeout=self.settings.connect_timeout_seconds,
+            )
+        except Exception as exc:
+            logger.warning("Read-only OPC UA disconnect was incomplete (%s)", type(exc).__name__)
+        else:
+            logger.info("Read-only OPC UA monitor disconnected")
+
+    async def read_signal(self, mapping: NodeMapping) -> SignalValue:
+        client = self._client
+        if not self.connected or client is None:
+            raise OPCUAReadError("OPC UA client is not connected")
+        try:
+            node = client.get_node(mapping.node_id)
+            data_value = await asyncio.wait_for(
+                node.read_data_value(raise_on_bad_status=False),
+                timeout=self.settings.read_timeout_seconds,
+            )
+        except Exception as exc:
+            raise OPCUAReadError("OPC UA signal read failed") from exc
+
+        quality = _quality(data_value.StatusCode)
+        timestamp = _source_timestamp(data_value.SourceTimestamp)
+        if quality in {SignalQuality.BAD, SignalQuality.UNAVAILABLE}:
+            return SignalValue(
+                value=None,
+                unit=mapping.unit,
+                quality=quality,
+                source_timestamp=timestamp,
+            )
+
+        raw = data_value.Value.Value if data_value.Value is not None else None
+        try:
+            value = _normalize_value(raw, mapping)
+        except (TypeError, ValueError, OverflowError):
+            return SignalValue(
+                value=None,
+                unit=mapping.unit,
+                quality=SignalQuality.BAD,
+                source_timestamp=timestamp,
+            )
+        return SignalValue(
+            value=value,
+            unit=mapping.unit,
+            quality=quality,
+            source_timestamp=timestamp,
+        )
+
+    async def read_signals(
+        self,
+        mappings: Iterable[NodeMapping],
+    ) -> dict[LogicalSignal, SignalValue]:
+        ordered = tuple(mappings)
+        results = await asyncio.gather(
+            *(self.read_signal(mapping) for mapping in ordered),
+            return_exceptions=True,
+        )
+        if results and all(isinstance(result, Exception) for result in results):
+            raise OPCUAReadError("All configured OPC UA signal reads failed")
+
+        values: dict[LogicalSignal, SignalValue] = {}
+        for mapping, result in zip(ordered, results, strict=True):
+            if isinstance(result, Exception):
+                values[mapping.signal] = SignalValue(
+                    value=None,
+                    unit=mapping.unit,
+                    quality=SignalQuality.UNAVAILABLE,
+                    source_timestamp=None,
+                )
+            else:
+                values[mapping.signal] = result
+        return values

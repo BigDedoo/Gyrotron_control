@@ -18,10 +18,19 @@ Username = Annotated[
 
 class AppMode(str, Enum):
     SIMULATION = "simulation"
+    OPCUA_READONLY = "opcua_readonly"
 
 
 class DataSource(str, Enum):
     SIMULATION = "simulation"
+    OPCUA = "opcua"
+
+
+class SignalQuality(str, Enum):
+    GOOD = "good"
+    UNCERTAIN = "uncertain"
+    BAD = "bad"
+    UNAVAILABLE = "unavailable"
 
 
 class ConnectionState(str, Enum):
@@ -34,6 +43,7 @@ class ConnectionState(str, Enum):
 
 class DataState(str, Enum):
     LIVE = "live"
+    DEGRADED = "degraded"
     STALE = "stale"
     UNAVAILABLE = "unavailable"
 
@@ -63,17 +73,24 @@ class UserRole(str, Enum):
     ADMIN = "admin"
 
 
+class SignalValue(BaseModel):
+    value: float | None
+    unit: str = Field(min_length=1, max_length=32)
+    quality: SignalQuality
+    source_timestamp: datetime | None
+
+
 class TelemetryPoint(BaseModel):
     timestamp: datetime
     source: DataSource
     sequence: int = Field(ge=0)
-    ionV: float
-    ionI: float
-    heatV: float
-    heatI: float
-    heLvl: float
-    Thot: float
-    Tcold: float
+    ionV: SignalValue
+    ionI: SignalValue
+    heatV: SignalValue
+    heatI: SignalValue
+    heLvl: SignalValue
+    Thot: SignalValue
+    Tcold: SignalValue
 
 
 class ComponentStatus(BaseModel):
@@ -113,6 +130,9 @@ class SystemStatus(BaseModel):
     interlocks: list[InterlockStatus]
     alarms: AlarmSummary
     timestamp: datetime
+    last_connection_attempt: datetime | None = None
+    last_successful_read: datetime | None = None
+    monitor_error: str | None = None
 
 
 class LoginRequest(BaseModel):

@@ -76,6 +76,10 @@ def test_telemetry_is_typed_and_explicitly_simulated(client: TestClient, authent
     payload = response.json()
     assert payload["source"] == "simulation"
     assert payload["timestamp"]
+    assert payload["ionV"]["value"] is not None
+    assert payload["ionV"]["unit"] == "V"
+    assert payload["ionV"]["quality"] == "good"
+    assert payload["ionV"]["source_timestamp"]
 
 
 def test_setpoint_endpoint_refuses_fake_commands(client: TestClient, authenticate):

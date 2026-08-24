@@ -23,10 +23,14 @@ from app.core.users import (
     user_manager,
 )
 from app.models import (
+    AppMode,
     DataSource,
+    DataState,
     LoginRequest,
     MessageResponse,
     SessionUser,
+    SignalQuality,
+    SignalValue,
     SystemStatus,
     TelemetryPoint,
     UserCreateRequest,
@@ -50,7 +54,7 @@ def _session_response(session: ApplicationSession) -> SessionUser:
 
 
 @router.post("/login", response_model=SessionUser)
-def login(credentials: LoginRequest, response: Response) -> SessionUser:
+def login(credentials: LoginRequest, response: Response, request: Request) -> SessionUser:
     if not authenticate_user(credentials.username, credentials.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
@@ -58,7 +62,7 @@ def login(credentials: LoginRequest, response: Response) -> SessionUser:
     if role is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not authorized")
 
-    settings = get_settings()
+    settings = getattr(request.app.state, "settings", get_settings())
     session = session_manager.create(credentials.username, role)
     response.set_cookie(
         key=settings.session_cookie_name,
@@ -84,7 +88,7 @@ def logout(
     response: Response,
     _: ApplicationSession = Depends(get_current_session),
 ) -> Response:
-    settings = get_settings()
+    settings = getattr(request.app.state, "settings", get_settings())
     session_manager.destroy(request.cookies.get(settings.session_cookie_name))
     response.delete_cookie(
         key=settings.session_cookie_name,
@@ -149,29 +153,59 @@ def remove_user(
 
 @router.get("/telemetry", response_model=TelemetryPoint)
 async def get_telemetry(
+    request: Request,
     _: ApplicationSession = Depends(get_current_session),
 ) -> TelemetryPoint:
+    settings = getattr(request.app.state, "settings", get_settings())
+    if settings.app_mode == AppMode.OPCUA_READONLY:
+        monitor = getattr(request.app.state, "opcua_monitor", None)
+        if monitor is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OPC UA telemetry monitor is unavailable",
+            )
+        view = monitor.view()
+        if view.snapshot is None or view.data_state in {DataState.STALE, DataState.UNAVAILABLE}:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"OPC UA telemetry is {view.data_state.value}",
+            )
+        return view.snapshot
+
     elapsed = time.monotonic() - start_time
     sequence = int(elapsed)
+    timestamp = datetime.now(timezone.utc)
+
+    def sample(value: float, unit: str) -> SignalValue:
+        return SignalValue(
+            value=value,
+            unit=unit,
+            quality=SignalQuality.GOOD,
+            source_timestamp=timestamp,
+        )
+
     return TelemetryPoint(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=timestamp,
         source=DataSource.SIMULATION,
         sequence=sequence,
-        ionV=4.5 + math.sin((elapsed / 6) * math.pi) * 0.6,
-        ionI=1.8 + math.cos((elapsed / 8) * math.pi) * 0.4,
-        heatV=7.0 + math.sin((elapsed / 5) * math.pi) * 0.8,
-        heatI=3.2 + math.cos((elapsed / 7) * math.pi) * 0.5,
-        heLvl=68 + math.sin((elapsed / 10) * math.pi) * 6,
-        Thot=62 + math.sin((elapsed / 9) * math.pi) * 3,
-        Tcold=28 + math.cos((elapsed / 9) * math.pi) * 3,
+        ionV=sample(4.5 + math.sin((elapsed / 6) * math.pi) * 0.6, "V"),
+        ionI=sample(1.8 + math.cos((elapsed / 8) * math.pi) * 0.4, "A"),
+        heatV=sample(7.0 + math.sin((elapsed / 5) * math.pi) * 0.8, "V"),
+        heatI=sample(3.2 + math.cos((elapsed / 7) * math.pi) * 0.5, "A"),
+        heLvl=sample(68 + math.sin((elapsed / 10) * math.pi) * 6, "%"),
+        Thot=sample(62 + math.sin((elapsed / 9) * math.pi) * 3, "degC"),
+        Tcold=sample(28 + math.cos((elapsed / 9) * math.pi) * 3, "degC"),
     )
 
 
 @router.get("/status", response_model=SystemStatus)
 async def system_status(
+    request: Request,
     _: ApplicationSession = Depends(get_current_session),
 ) -> SystemStatus:
-    return get_system_status()
+    settings = getattr(request.app.state, "settings", get_settings())
+    monitor = getattr(request.app.state, "opcua_monitor", None)
+    return get_system_status(settings, monitor)
 
 
 @router.post("/setpoint", response_model=MessageResponse)
@@ -180,5 +214,5 @@ async def set_parameters(
 ) -> MessageResponse:
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Hardware setpoint commands are unavailable in simulation mode",
+        detail="Hardware setpoint commands are unavailable in this read-only application",
     )
