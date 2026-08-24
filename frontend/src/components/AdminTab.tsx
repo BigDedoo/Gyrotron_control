@@ -1,18 +1,11 @@
 import { useEffect, useState } from "react";
 import { Trash2, UserPlus, Users } from "lucide-react";
-
-
-
-// Define user interface for TypeScript
-interface User {
-    username: string;
-    role: string;
-}
-
+import { api, ApiError } from "@/api/client";
+import type { UserRecord, UserRole } from "@/api/types";
 export default function AdminTab() {
-    const [users, setUsers] = useState<User[]>([]); // Array of User objects
+    const [users, setUsers] = useState<UserRecord[]>([]);
     const [newUser, setNewUser] = useState("");
-    const [newRole, setNewRole] = useState("user"); // "user" or "admin"
+    const [newRole, setNewRole] = useState<UserRole>("user");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
@@ -22,13 +15,10 @@ export default function AdminTab() {
 
     async function fetchUsers() {
         try {
-            const res = await fetch("/api/users");
-            if (res.ok) {
-                const data = await res.json();
-                setUsers(data);
-            }
-        } catch (err) {
-            console.error("Failed to fetch users", err);
+            setUsers(await api.getUsers());
+            setError("");
+        } catch (caught) {
+            setError(apiErrorMessage(caught, "Failed to load users"));
         }
     }
 
@@ -37,22 +27,13 @@ export default function AdminTab() {
         if (!newUser.trim()) return;
         setLoading(true);
         try {
-            const res = await fetch("/api/users/add", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username: newUser.trim(), role: newRole }),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setUsers(data.users);
-                setNewUser("");
-                setNewRole("user"); // reset logic
-                setError("");
-            } else {
-                setError("Failed to add user");
-            }
-        } catch (err) {
-            setError("Error adding user");
+            const data = await api.addUser(newUser.trim(), newRole);
+            setUsers(data.users);
+            setNewUser("");
+            setNewRole("user");
+            setError("");
+        } catch (caught) {
+            setError(apiErrorMessage(caught, "Error adding user"));
         } finally {
             setLoading(false);
         }
@@ -60,18 +41,28 @@ export default function AdminTab() {
 
     async function removeUser(username: string) {
         if (!confirm(`Are you sure you want to remove ${username}?`)) return;
+        setLoading(true);
         try {
-            const res = await fetch("/api/users/remove", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username }),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setUsers(data.users);
-            }
-        } catch (err) {
-            console.error("Error removing user", err);
+            const data = await api.removeUser(username);
+            setUsers(data.users);
+            setError("");
+        } catch (caught) {
+            setError(apiErrorMessage(caught, "Error removing user"));
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function updateRole(username: string, role: UserRole) {
+        setLoading(true);
+        try {
+            const data = await api.updateUser(username, role);
+            setUsers(data.users);
+            setError("");
+        } catch (caught) {
+            setError(apiErrorMessage(caught, "Error updating role"));
+        } finally {
+            setLoading(false);
         }
     }
 
@@ -108,7 +99,7 @@ export default function AdminTab() {
                         <label className="text-sm font-medium text-slate-700">Role</label>
                         <select
                             value={newRole}
-                            onChange={(e) => setNewRole(e.target.value)}
+                            onChange={(e) => setNewRole(e.target.value as UserRole)}
                             className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
                             <option value="user">User</option>
@@ -142,14 +133,21 @@ export default function AdminTab() {
                                 <tr key={u.username} className="bg-white hover:bg-slate-50">
                                     <td className="px-4 py-3 font-medium">{u.username}</td>
                                     <td className="px-4 py-3">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-800'
-                                            }`}>
-                                            {u.role}
-                                        </span>
+                                        <select
+                                            value={u.role}
+                                            disabled={loading}
+                                            onChange={(event) => void updateRole(u.username, event.target.value as UserRole)}
+                                            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs disabled:opacity-50"
+                                            aria-label={`Role for ${u.username}`}
+                                        >
+                                            <option value="user">User</option>
+                                            <option value="admin">Admin</option>
+                                        </select>
                                     </td>
                                     <td className="px-4 py-3 text-center">
                                         <button
                                             onClick={() => removeUser(u.username)}
+                                            disabled={loading}
                                             className="p-2 text-slate-400 hover:text-red-600 transition-colors rounded-md hover:bg-red-50"
                                             title="Remove user"
                                         >
@@ -171,4 +169,9 @@ export default function AdminTab() {
             </div>
         </div>
     );
+}
+
+
+function apiErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof ApiError ? error.message : fallback;
 }

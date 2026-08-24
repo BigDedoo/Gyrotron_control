@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -6,19 +6,92 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Activity, AlertTriangle, Flame, Gauge, ShieldCheck, Settings, Power, Thermometer, Timer, Zap } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from "recharts";
+import {
+  Activity,
+  AlertTriangle,
+  Flame,
+  Gauge,
+  ShieldCheck,
+  Settings,
+  Power,
+  Thermometer,
+  Timer,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Area,
+  AreaChart,
+} from "recharts";
 
-// =========================================================
-// Helper UI
-// =========================================================
-function StatusDot({ ok }: { ok: boolean }) {
-  return (
-    <span className={`inline-block size-3 rounded-full mr-2 ${ok ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.25)]" : "bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.25)]"}`} />
-  );
+import { api, ApiError } from "@/api/client";
+import type {
+  ComponentState,
+  ComponentStatus,
+  ConditionState,
+  ConnectionState,
+  DataState,
+  InterlockStatus,
+  OverallState,
+  SessionUser,
+  SystemStatus,
+  TelemetryPoint,
+} from "@/api/types";
+import { useSystemStatus } from "@/hooks/useSystemStatus";
+import { useTelemetry } from "@/hooks/useTelemetry";
+import Login from "@/components/Login";
+import AdminTab from "@/components/AdminTab";
+
+
+type DisplayState =
+  | ComponentState
+  | ConditionState
+  | ConnectionState
+  | DataState
+  | OverallState;
+
+const UNKNOWN_COMPONENT: ComponentStatus = {
+  state: "unknown",
+  ready: "unknown",
+  rectifier: "unknown",
+  converter: "unknown",
+  protection: "unknown",
+};
+
+
+function stateClasses(state: DisplayState): string {
+  if (["ok", "on", "connected", "live", "nominal"].includes(state)) {
+    return "bg-emerald-600 text-white";
+  }
+  if (["fault", "error", "unavailable", "disconnected"].includes(state)) {
+    return "bg-red-600 text-white";
+  }
+  if (["simulation", "simulated", "stale", "connecting"].includes(state)) {
+    return "bg-amber-500 text-slate-950";
+  }
+  return "bg-slate-500 text-white";
 }
 
-function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
+
+function StateBadge({ state }: { state: DisplayState }) {
+  return <Badge className={`rounded-full ${stateClasses(state)}`}>{state.toUpperCase()}</Badge>;
+}
+
+
+function StatusDot({ state }: { state: DisplayState }) {
+  const color = stateClasses(state).split(" ")[0];
+  return <span className={`inline-block size-3 rounded-full mr-2 ${color}`} />;
+}
+
+
+function Labeled({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid grid-cols-12 items-center gap-3">
       <div className="col-span-5 text-sm text-muted-foreground">{label}</div>
@@ -27,88 +100,141 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function GaugeCard({ title, value, unit, icon: Icon }: { title: string; value: number; unit?: string; icon?: any }) {
+
+function GaugeCard({
+  title,
+  value,
+  unit,
+  icon: Icon,
+  dataState,
+}: {
+  title: string;
+  value: number | null;
+  unit?: string;
+  icon: LucideIcon;
+  dataState: DataState;
+}) {
   return (
-    <Card className="rounded-2xl">
+    <Card className={`rounded-2xl ${dataState !== "live" ? "border-amber-400 bg-amber-50/40" : ""}`}>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium flex items-center gap-2"><Icon className="size-4" /> {title}</CardTitle>
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Icon className="size-4" /> {title}
+        </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="text-3xl font-semibold">{value.toFixed(1)}{unit}</div>
+        <div className="text-3xl font-semibold">
+          {value === null ? "—" : value.toFixed(1)}{value === null ? "" : unit}
+        </div>
+        {dataState !== "live" && <div className="mt-1 text-xs font-medium text-amber-800">{dataState.toUpperCase()}</div>}
       </CardContent>
     </Card>
   );
 }
 
-function Indicator({ label, ok, warn = false }: { label: string; ok: boolean; warn?: boolean }) {
-  const color = ok ? "bg-emerald-500" : warn ? "bg-amber-500" : "bg-red-500";
+
+function Indicator({ label, state }: { label: string; state: DisplayState }) {
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className={`inline-block size-2 rounded-full ${color}`}></span>
+    <div className="flex items-center justify-between gap-2 text-sm">
       <span>{label}</span>
+      <StateBadge state={state} />
     </div>
   );
 }
 
-// =========================================================
-// Telemetry (live from backend)
-// =========================================================
-function useTelemetry() {
-  const [data, setData] = useState<any[]>([]);
 
-  useEffect(() => {
-    // Poll backend every 1000ms
-    const id = setInterval(async () => {
-      try {
-        const res = await fetch("/api/telemetry");
-        if (!res.ok) throw new Error("Failed to fetch");
-        const point = await res.json();
+function ModeBanner({
+  status,
+  statusState,
+  telemetryState,
+  statusError,
+  telemetryError,
+}: {
+  status: SystemStatus | null;
+  statusState: DataState;
+  telemetryState: DataState;
+  statusError: string | null;
+  telemetryError: string | null;
+}) {
+  if (!status) {
+    return (
+      <div className="border-b border-red-300 bg-red-100 px-4 py-3 text-center text-sm font-semibold text-red-900" role="alert">
+        SYSTEM STATUS UNAVAILABLE — machine state is UNKNOWN and hardware controls are disabled.
+        {statusError && <span className="ml-2 font-normal">{statusError}</span>}
+      </div>
+    );
+  }
 
-        setData((prev) => {
-          // Keep last 40 points
-          const newData = [...prev, point];
-          if (newData.length > 40) newData.shift();
-          return newData;
-        });
-      } catch (err) {
-        console.error("Telemetry fetch error:", err);
-      }
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const latest = data[data.length - 1] || {
-    time: 0, ionV: 0, ionI: 0, heatV: 0, heatI: 0, heLvl: 0, Thot: 0, Tcold: 0
-  };
-  return { data, latest };
+  return (
+    <div className="border-b border-amber-300 bg-amber-100 px-4 py-3 text-amber-950" role="status">
+      <div className="max-w-7xl mx-auto flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="font-bold tracking-wide">SIMULATION MODE — NO PLC CONNECTED</div>
+          <div className="text-xs">All telemetry is generated by the backend. Hardware commands are unavailable.</div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span>Status feed: <StateBadge state={statusState} /></span>
+          <span>Connection: <StateBadge state={status.connection_state} /></span>
+          <span>Telemetry: <StateBadge state={telemetryState} /></span>
+        </div>
+      </div>
+      {(statusError || telemetryError) && (
+        <div className="max-w-7xl mx-auto mt-2 text-xs font-medium" role="alert">
+          {[statusError, telemetryError].filter(Boolean).join(" ")}
+        </div>
+      )}
+    </div>
+  );
 }
 
-// =========================================================
-// Sections
-// =========================================================
-function Dashboard({ cpsOn, apsOn, faults, data, latest }: { cpsOn: boolean; apsOn: boolean; faults: string[], data: any[], latest: any }) {
-  const ok = faults.length === 0;
+
+function Dashboard({
+  status,
+  data,
+  latest,
+  telemetryState,
+  lastSuccessfulAt,
+}: {
+  status: SystemStatus | null;
+  data: TelemetryPoint[];
+  latest: TelemetryPoint | null;
+  telemetryState: DataState;
+  lastSuccessfulAt: string | null;
+}) {
+  const cps = status?.cps ?? UNKNOWN_COMPONENT;
+  const aps = status?.aps ?? UNKNOWN_COMPONENT;
+  const overallState: DisplayState = telemetryState !== "live"
+    ? telemetryState
+    : status?.overall_state ?? "unknown";
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
       <Card className="rounded-2xl xl:col-span-2">
-        <CardHeader className="pb-2 flex flex-row items-center justify-between">
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2 text-base"><Activity className="size-4" /> System Overview</CardTitle>
-          <Badge variant={ok ? "default" : "destructive"} className="text-xs px-3 py-1 rounded-full">{ok ? "All systems nominal" : `${faults.length} alarm(s)`}</Badge>
+          <StateBadge state={overallState} />
         </CardHeader>
         <CardContent>
+          {telemetryState !== "live" && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+              Telemetry is {telemetryState}. Values below are {latest ? "the last received samples and are not current" : "unavailable"}.
+            </div>
+          )}
+          <div className="mb-4 text-xs text-slate-500">
+            Source: <strong>SIMULATION</strong> · Last successful update: {lastSuccessfulAt ? new Date(lastSuccessfulAt).toLocaleString() : "never"}
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <GaugeCard title="Ion Pump V" value={latest.ionV} unit=" V" icon={Gauge} />
-            <GaugeCard title="Ion Pump I" value={latest.ionI} unit=" A" icon={Zap} />
-            <GaugeCard title="Heater V" value={latest.heatV} unit=" V" icon={Flame} />
-            <GaugeCard title="Heater I" value={latest.heatI} unit=" A" icon={Zap} />
-            <GaugeCard title="Liquid He Level" value={latest.heLvl} unit=" %" icon={Gauge} />
-            <GaugeCard title="T hot" value={latest.Thot} unit=" °C" icon={Thermometer} />
-            <GaugeCard title="T cold" value={latest.Tcold} unit=" °C" icon={Thermometer} />
-            <GaugeCard title="Pulse Duration" value={2.5} unit=" ms" icon={Timer} />
+            <GaugeCard title="Ion Pump V" value={latest?.ionV ?? null} unit=" V" icon={Gauge} dataState={telemetryState} />
+            <GaugeCard title="Ion Pump I" value={latest?.ionI ?? null} unit=" A" icon={Zap} dataState={telemetryState} />
+            <GaugeCard title="Heater V" value={latest?.heatV ?? null} unit=" V" icon={Flame} dataState={telemetryState} />
+            <GaugeCard title="Heater I" value={latest?.heatI ?? null} unit=" A" icon={Zap} dataState={telemetryState} />
+            <GaugeCard title="Liquid He Level" value={latest?.heLvl ?? null} unit=" %" icon={Gauge} dataState={telemetryState} />
+            <GaugeCard title="T hot" value={latest?.Thot ?? null} unit=" °C" icon={Thermometer} dataState={telemetryState} />
+            <GaugeCard title="T cold" value={latest?.Tcold ?? null} unit=" °C" icon={Thermometer} dataState={telemetryState} />
+            <GaugeCard title="Actual Pulse Duration" value={null} unit=" ms" icon={Timer} dataState="unavailable" />
           </div>
           <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="rounded-2xl">
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Heater Voltage (live)</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Heater Voltage — simulated</CardTitle></CardHeader>
               <CardContent>
                 <div className="h-40">
                   <ResponsiveContainer width="100%" height="100%">
@@ -120,26 +246,26 @@ function Dashboard({ cpsOn, apsOn, faults, data, latest }: { cpsOn: boolean; aps
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="time" hide />
-                      <YAxis domain={[0, 'dataMax + 2']} width={28} />
-                      <Tooltip />
-                      <Area type="monotone" dataKey="heatV" stroke="#8884d8" fillOpacity={1} fill="url(#g1)" />
+                      <XAxis dataKey="timestamp" hide />
+                      <YAxis domain={[0, "dataMax + 2"]} width={28} unit=" V" />
+                      <Tooltip labelFormatter={(value) => new Date(String(value)).toLocaleTimeString()} />
+                      <Area type="monotone" dataKey="heatV" stroke="#8884d8" fillOpacity={1} fill="url(#g1)" unit=" V" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </CardContent>
             </Card>
             <Card className="rounded-2xl">
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Ion Pump Current (live)</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Ion Pump Current — simulated</CardTitle></CardHeader>
               <CardContent>
                 <div className="h-40">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={data} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="time" hide />
-                      <YAxis domain={[0, 'dataMax + 2']} width={28} />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="ionI" stroke="#82ca9d" dot={false} />
+                      <XAxis dataKey="timestamp" hide />
+                      <YAxis domain={[0, "dataMax + 2"]} width={28} unit=" A" />
+                      <Tooltip labelFormatter={(value) => new Date(String(value)).toLocaleTimeString()} />
+                      <Line type="monotone" dataKey="ionI" stroke="#82ca9d" dot={false} unit=" A" />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -151,37 +277,43 @@ function Dashboard({ cpsOn, apsOn, faults, data, latest }: { cpsOn: boolean; aps
 
       <Card className="rounded-2xl">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4" /> Quick Status</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4" /> Backend Status</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
             <div className="font-medium mb-2">CPS</div>
-            <div className="space-y-1">
-              <Indicator label="Ready" ok={cpsOn} />
-              <Indicator label="Power Rectifier ON" ok={cpsOn} />
-              <Indicator label="Charging Converter ON" ok={false} warn />
-              <Indicator label="Protection" ok={true} />
+            <div className="space-y-2">
+              <Indicator label="Overall" state={cps.state} />
+              <Indicator label="Ready" state={cps.ready} />
+              <Indicator label="Power Rectifier" state={cps.rectifier} />
+              <Indicator label="Charging Converter" state={cps.converter} />
+              <Indicator label="Protection" state={cps.protection} />
             </div>
           </div>
           <Separator />
           <div>
             <div className="font-medium mb-2">APS</div>
-            <div className="space-y-1">
-              <Indicator label="Ready" ok={apsOn} />
-              <Indicator label="Power Rectifier ON" ok={apsOn} />
-              <Indicator label="Charging Converter ON" ok={false} warn />
-              <Indicator label="Protection" ok={true} />
+            <div className="space-y-2">
+              <Indicator label="Overall" state={aps.state} />
+              <Indicator label="Ready" state={aps.ready} />
+              <Indicator label="Power Rectifier" state={aps.rectifier} />
+              <Indicator label="Charging Converter" state={aps.converter} />
+              <Indicator label="Protection" state={aps.protection} />
             </div>
           </div>
           <Separator />
           <div>
             <div className="font-medium mb-2">Active Alarms</div>
-            {faults.length === 0 ? (
-              <Badge className="bg-emerald-600">None</Badge>
+            {!status || status.alarms.state === "unknown" ? (
+              <StateBadge state="unknown" />
+            ) : status.alarms.active.length === 0 ? (
+              <StateBadge state="ok" />
             ) : (
-              <ul className="text-sm list-disc ml-5 space-y-1">
-                {faults.map((f, i) => (
-                  <li key={i} className="flex items-center gap-2"><AlertTriangle className="size-4 text-amber-500" />{f}</li>
+              <ul className="text-sm space-y-1">
+                {status.alarms.active.map((alarm) => (
+                  <li key={alarm.code} className="flex items-center gap-2">
+                    <AlertTriangle className="size-4 text-red-600" />{alarm.message}
+                  </li>
                 ))}
               </ul>
             )}
@@ -192,239 +324,246 @@ function Dashboard({ cpsOn, apsOn, faults, data, latest }: { cpsOn: boolean; aps
   );
 }
 
-function PowerTab() {
+
+function PowerTab({ status }: { status: SystemStatus | null }) {
   const [pulse, setPulse] = useState(2.5);
   const [vcath, setVcath] = useState(6.0);
   const [vanode, setVanode] = useState(5.0);
-  const [cpsCmd, setCpsCmd] = useState({ rect: false, conv: false });
-  const [apsCmd, setApsCmd] = useState({ rect: false, conv: false });
+  const cps = status?.cps ?? UNKNOWN_COMPONENT;
+  const aps = status?.aps ?? UNKNOWN_COMPONENT;
+
+  function resetRequestedValues() {
+    setPulse(2.5);
+    setVcath(6.0);
+    setVanode(5.0);
+  }
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
       <Card className="rounded-2xl xl:col-span-2">
-        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Settings className="size-4" /> Setpoints</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Settings className="size-4" /> Requested Setpoints — simulation draft</CardTitle></CardHeader>
         <CardContent className="space-y-6">
-          <Labeled label={`Pulse duration: ${pulse.toFixed(2)} ms`}>
-            <div id="setpoint-pulse">
-              <Slider value={[pulse]} onValueChange={(v) => setPulse(v[0])} min={0} max={10} step={0.1} />
-            </div>
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            These are uncommitted requested values only. No actual PLC setpoint is available and Apply is disabled.
+          </div>
+          <Labeled label={`Requested pulse duration: ${pulse.toFixed(2)} ms`}>
+            <div id="setpoint-pulse"><Slider value={[pulse]} onValueChange={(value) => setPulse(value[0])} min={0} max={10} step={0.1} /></div>
           </Labeled>
-          <Labeled label={`Cathode voltage: ${vcath.toFixed(2)} V`}>
-            <div id="setpoint-cathode">
-              <Slider value={[vcath]} onValueChange={(v) => setVcath(v[0])} min={0} max={10} step={0.1} />
-            </div>
+          <Labeled label={`Requested cathode voltage: ${vcath.toFixed(2)} V`}>
+            <div id="setpoint-cathode"><Slider value={[vcath]} onValueChange={(value) => setVcath(value[0])} min={0} max={10} step={0.1} /></div>
           </Labeled>
-          <Labeled label={`Anode voltage: ${vanode.toFixed(2)} V`}>
-            <div id="setpoint-anode">
-              <Slider value={[vanode]} onValueChange={(v) => setVanode(v[0])} min={0} max={10} step={0.1} />
-            </div>
+          <Labeled label={`Requested anode voltage: ${vanode.toFixed(2)} V`}>
+            <div id="setpoint-anode"><Slider value={[vanode]} onValueChange={(value) => setVanode(value[0])} min={0} max={10} step={0.1} /></div>
           </Labeled>
           <div className="flex gap-3 pt-2">
-            <Button id="apply-setpoints" className="rounded-2xl">Apply Setpoints</Button>
-            <Button variant="outline" className="rounded-2xl">Revert</Button>
+            <Button id="apply-setpoints" className="rounded-2xl" disabled title="Unavailable in simulation">Apply Setpoints</Button>
+            <Button variant="outline" className="rounded-2xl" onClick={resetRequestedValues}>Revert requested edits</Button>
           </div>
+          <div className="text-xs text-slate-500">Actual pulse, cathode, and anode values: UNAVAILABLE</div>
         </CardContent>
       </Card>
 
       <div className="grid grid-cols-1 gap-4">
-        <Card className="rounded-2xl">
-          <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Power className="size-4" /> CPS Commands</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <Labeled label="Power Rectifier">
-              <div id="cps-rectifier" className="flex items-center gap-3">
-                <Switch checked={cpsCmd.rect} onCheckedChange={(v) => setCpsCmd({ ...cpsCmd, rect: v })} />
-                <Badge variant={cpsCmd.rect ? "default" : "secondary"}>{cpsCmd.rect ? "ON" : "OFF"}</Badge>
-              </div>
-            </Labeled>
-            <Labeled label="Charging Converter">
-              <div id="cps-converter" className="flex items-center gap-3">
-                <Switch checked={cpsCmd.conv} onCheckedChange={(v) => setCpsCmd({ ...cpsCmd, conv: v })} />
-                <Badge variant={cpsCmd.conv ? "default" : "secondary"}>{cpsCmd.conv ? "ON" : "OFF"}</Badge>
-              </div>
-            </Labeled>
-            <div className="flex gap-3 pt-2">
-              <Button className="rounded-2xl" variant="secondary">Protection Reset</Button>
-              <Button className="rounded-2xl" variant="outline">Apply</Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-2xl">
-          <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Power className="size-4" /> APS Commands</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <Labeled label="Power Rectifier">
-              <div id="aps-rectifier" className="flex items-center gap-3">
-                <Switch checked={apsCmd.rect} onCheckedChange={(v) => setApsCmd({ ...apsCmd, rect: v })} />
-                <Badge variant={apsCmd.rect ? "default" : "secondary"}>{apsCmd.rect ? "ON" : "OFF"}</Badge>
-              </div>
-            </Labeled>
-            <Labeled label="Charging Converter">
-              <div id="aps-converter" className="flex items-center gap-3">
-                <Switch checked={apsCmd.conv} onCheckedChange={(v) => setApsCmd({ ...apsCmd, conv: v })} />
-                <Badge variant={apsCmd.conv ? "default" : "secondary"}>{apsCmd.conv ? "ON" : "OFF"}</Badge>
-              </div>
-            </Labeled>
-            <div className="flex gap-3 pt-2">
-              <Button className="rounded-2xl" variant="secondary">Protection Reset</Button>
-              <Button className="rounded-2xl" variant="outline">Apply</Button>
-            </div>
-          </CardContent>
-        </Card>
+        <PowerCommands title="CPS Commands" component={cps} prefix="cps" />
+        <PowerCommands title="APS Commands" component={aps} prefix="aps" />
       </div>
     </div>
   );
 }
 
-function SafetyTab() {
-  const items = [
-    { g: "Environment", k: ["External interlock", "GS Doors", "Waterflow", "Poor vacuum"] },
-    { g: "Supplies", k: ["CMPS ON", "GPPS ON", "IPPS ON", "APS ON", "CPS ON"] },
-    { g: "Alarms", k: ["ARC detector", "Overcurrent", "Overvoltage", "Temperature"] },
-    { g: "Cryo", k: ["Liquid He gauge", "He level normal"] },
-  ];
+
+function PowerCommands({ title, component, prefix }: { title: string; component: ComponentStatus; prefix: "cps" | "aps" }) {
+  return (
+    <Card className="rounded-2xl">
+      <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Power className="size-4" /> {title}</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <div className="text-xs font-medium text-amber-800">Unavailable in simulation</div>
+        <Labeled label="Power Rectifier">
+          <div id={`${prefix}-rectifier`} className="flex items-center gap-3">
+            <Switch checked={component.rectifier === "on"} disabled aria-label={`${title} power rectifier unavailable`} />
+            <StateBadge state={component.rectifier} />
+          </div>
+        </Labeled>
+        <Labeled label="Charging Converter">
+          <div id={`${prefix}-converter`} className="flex items-center gap-3">
+            <Switch checked={component.converter === "on"} disabled aria-label={`${title} charging converter unavailable`} />
+            <StateBadge state={component.converter} />
+          </div>
+        </Labeled>
+        <div className="flex gap-3 pt-2">
+          <Button className="rounded-2xl" variant="secondary" disabled title="Unavailable in simulation">Protection Reset</Button>
+          <Button className="rounded-2xl" variant="outline" disabled title="Unavailable in simulation">Apply</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+function SafetyTab({ status }: { status: SystemStatus | null }) {
+  const groups = status?.interlocks.reduce<Record<string, InterlockStatus[]>>((result, item) => {
+    (result[item.group] ??= []).push(item);
+    return result;
+  }, {}) ?? {};
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-      {items.map((grp) => (
-        <Card key={grp.g} className="rounded-2xl">
-          <CardHeader className="pb-2"><CardTitle className="text-sm">{grp.g}</CardTitle></CardHeader>
+      {Object.entries(groups).map(([group, items]) => (
+        <Card key={group} className="rounded-2xl">
+          <CardHeader className="pb-2"><CardTitle className="text-sm">{group}</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-1 gap-2">
-            {grp.k.map((k) => (
-              <div key={k} className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">{k}</span>
-                <Badge className="rounded-full">OK</Badge>
+            {items.map((item) => (
+              <div key={item.name} className="flex items-center justify-between gap-3">
+                <span className="text-sm text-muted-foreground">{item.name}</span>
+                <StateBadge state={item.state} />
               </div>
             ))}
           </CardContent>
         </Card>
       ))}
+      {Object.keys(groups).length === 0 && (
+        <Card className="rounded-2xl xl:col-span-2 border-red-300">
+          <CardContent className="p-6 text-sm font-medium text-red-800">Interlock data is unavailable. No safe state is being asserted.</CardContent>
+        </Card>
+      )}
       <Card className="rounded-2xl">
         <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="size-4" /> Actions</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <Button className="rounded-2xl w-full" variant="secondary">Reset Interlocks</Button>
-          <Button className="rounded-2xl w-full" variant="destructive">Emergency Shutdown</Button>
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+            No reset or shutdown command is implemented. Physical and PLC safety systems remain authoritative.
+          </div>
+          <Button className="rounded-2xl w-full" variant="secondary" disabled title="Unavailable in simulation">Reset Interlocks</Button>
+          <Button className="rounded-2xl w-full" variant="destructive" disabled title="No real shutdown command is available">Emergency Shutdown — unavailable</Button>
         </CardContent>
       </Card>
     </div>
   );
 }
 
-function MonitoringTab({ data, latest }: { data: any[], latest: any }) {
+
+function MonitoringTab({ data, latest, dataState }: { data: TelemetryPoint[]; latest: TelemetryPoint | null; dataState: DataState }) {
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
       <Card className="rounded-2xl xl:col-span-2">
-        <CardHeader className="pb-2"><CardTitle className="text-base">Live Trends</CardTitle></CardHeader>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between">
+          <CardTitle className="text-base">Live Trends — simulated</CardTitle>
+          <StateBadge state={dataState} />
+        </CardHeader>
         <CardContent>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" />
+                <XAxis dataKey="timestamp" tickFormatter={(value) => new Date(String(value)).toLocaleTimeString()} />
                 <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="ionV" stroke="#8884d8" dot={false} />
-                <Line type="monotone" dataKey="ionI" stroke="#82ca9d" dot={false} />
-                <Line type="monotone" dataKey="heatV" stroke="#ffc658" dot={false} />
-                <Line type="monotone" dataKey="heatI" stroke="#ff7300" dot={false} />
+                <Tooltip labelFormatter={(value) => new Date(String(value)).toLocaleString()} />
+                <Line type="monotone" dataKey="ionV" name="Ion V" stroke="#8884d8" dot={false} unit=" V" />
+                <Line type="monotone" dataKey="ionI" name="Ion I" stroke="#82ca9d" dot={false} unit=" A" />
+                <Line type="monotone" dataKey="heatV" name="Heater V" stroke="#ffc658" dot={false} unit=" V" />
+                <Line type="monotone" dataKey="heatI" name="Heater I" stroke="#ff7300" dot={false} unit=" A" />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>
       <div className="grid grid-cols-1 gap-4">
-        <GaugeCard title="Liquid He Level" value={latest.heLvl} unit=" %" icon={Gauge} />
-        <GaugeCard title="T hot" value={latest.Thot} unit=" °C" icon={Thermometer} />
-        <GaugeCard title="T cold" value={latest.Tcold} unit=" °C" icon={Thermometer} />
+        <GaugeCard title="Liquid He Level" value={latest?.heLvl ?? null} unit=" %" icon={Gauge} dataState={dataState} />
+        <GaugeCard title="T hot" value={latest?.Thot ?? null} unit=" °C" icon={Thermometer} dataState={dataState} />
+        <GaugeCard title="T cold" value={latest?.Tcold ?? null} unit=" °C" icon={Thermometer} dataState={dataState} />
       </div>
     </div>
   );
 }
 
+
 function PowerFlowTab() {
   return (
     <Card className="rounded-2xl">
-      <CardHeader className="pb-2"><CardTitle className="text-base">Power Flow</CardTitle></CardHeader>
+      <CardHeader className="pb-2"><CardTitle className="text-base">Power Flow — reference diagram</CardTitle></CardHeader>
       <CardContent>
+        <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+          Static reference only. This view does not display live power flow.
+        </div>
         <div className="w-full overflow-hidden rounded-xl border bg-white">
-          <img
-            src="/power_flow.png"
-            alt="Gyrotron Control Architecture Power Flow"
-            className="max-w-full max-h-[75vh] mx-auto object-contain"
-          />
+          <img src="/power_flow.png" alt="Gyrotron Control Architecture Power Flow" className="max-w-full max-h-[75vh] mx-auto object-contain" />
         </div>
       </CardContent>
     </Card>
   );
 }
 
-// =========================================================
-// Startup Wizard
-// =========================================================
+
 type Step = { key: string; title: string; desc: string; targetTab?: string; targetId?: string; hint?: string };
-export const STARTUP_STEPS: Step[] = [
-  { key: "prechecks", title: "Pre-checks", desc: "Verify doors closed, waterflow OK, vacuum good, interlocks reset.", targetTab: "safety", hint: "5052: GS Doors, Waterflow, Poor vacuum, External interlock" },
-  { key: "ipsp", title: "Ion pump ON", desc: "Ensure ion pump supply is powered.", targetTab: "monitoring", hint: "5017: Ion Pump V/I rising; 5052: IPPS ON" },
-  { key: "heater", title: "Heaters ON", desc: "Turn on cathode filament/heater and wait for emission temperature.", targetTab: "monitoring", hint: "5017: Heater V/I; 5013: T hot/cold" },
-  { key: "cps_rect", title: "CPS Rectifier ON", desc: "Enable CPS Power Rectifier.", targetTab: "power", targetId: "cps-rectifier", hint: "5068: DO0; 5052: CPS Rectifier ON" },
-  { key: "cps_conv", title: "CPS Charging Converter ON", desc: "Enable CPS converter.", targetTab: "power", targetId: "cps-converter", hint: "5068: DO2; 5052: CPS Converter ON" },
-  { key: "set_cath", title: "Set Cathode Voltage", desc: "Adjust cathode setpoint (AO1).", targetTab: "power", targetId: "setpoint-cathode", hint: "5024: AO1 Cathode preset" },
-  { key: "set_an", title: "Set Anode Voltage", desc: "Adjust anode setpoint (AO2).", targetTab: "power", targetId: "setpoint-anode", hint: "5024: AO2 Anode preset" },
-  { key: "set_pulse", title: "Set Pulse Duration", desc: "Adjust pulse duration (AO0).", targetTab: "power", targetId: "setpoint-pulse", hint: "5024: AO0 Pulse duration" },
-  { key: "apply", title: "Apply Setpoints", desc: "Apply analog setpoints.", targetTab: "power", targetId: "apply-setpoints", hint: "UI: Apply setpoints button" },
-  { key: "aps_rect", title: "APS Rectifier ON", desc: "Enable APS Power Rectifier.", targetTab: "power", targetId: "aps-rectifier", hint: "5069: DO0; 5052: APS Rectifier ON" },
-  { key: "aps_conv", title: "APS Charging Converter ON", desc: "Enable APS converter.", targetTab: "power", targetId: "aps-converter", hint: "5069: DO2; 5052: APS Converter ON" },
-  { key: "verify", title: "Verify Ready", desc: "Confirm CPS/APS Ready, no alarms, then proceed to operation.", targetTab: "dashboard", hint: "5052: Ready flags; Alarms clear" },
+const STARTUP_STEPS: Step[] = [
+  { key: "prechecks", title: "Pre-checks", desc: "Review doors, waterflow, vacuum and interlock indications.", targetTab: "safety", hint: "Future PLC signals: GS Doors, Waterflow, Poor vacuum, External interlock" },
+  { key: "ipsp", title: "Ion pump review", desc: "Review simulated ion pump telemetry.", targetTab: "monitoring", hint: "No hardware state is verified in Phase 1" },
+  { key: "heater", title: "Heater review", desc: "Review simulated heater telemetry.", targetTab: "monitoring", hint: "No hardware state is verified in Phase 1" },
+  { key: "cps_rect", title: "CPS Rectifier guidance", desc: "Future operator step; command unavailable.", targetTab: "power", targetId: "cps-rectifier" },
+  { key: "cps_conv", title: "CPS Converter guidance", desc: "Future operator step; command unavailable.", targetTab: "power", targetId: "cps-converter" },
+  { key: "set_cath", title: "Draft Cathode Voltage", desc: "Edit a requested simulation value only.", targetTab: "power", targetId: "setpoint-cathode" },
+  { key: "set_an", title: "Draft Anode Voltage", desc: "Edit a requested simulation value only.", targetTab: "power", targetId: "setpoint-anode" },
+  { key: "set_pulse", title: "Draft Pulse Duration", desc: "Edit a requested simulation value only.", targetTab: "power", targetId: "setpoint-pulse" },
+  { key: "apply", title: "Apply Setpoints guidance", desc: "Hardware application is unavailable.", targetTab: "power", targetId: "apply-setpoints" },
+  { key: "aps_rect", title: "APS Rectifier guidance", desc: "Future operator step; command unavailable.", targetTab: "power", targetId: "aps-rectifier" },
+  { key: "aps_conv", title: "APS Converter guidance", desc: "Future operator step; command unavailable.", targetTab: "power", targetId: "aps-converter" },
+  { key: "verify", title: "Review summary", desc: "Manual review only; this does not establish machine readiness.", targetTab: "dashboard" },
 ];
 
+
 function StartupWizard({ goTo }: { goTo: (tab: string, id?: string) => void }) {
-  const [i, setI] = useState(0);
-  const [done, setDone] = useState<Record<string, boolean>>({});
-  const step = STARTUP_STEPS[i];
-
-  function focusTarget() {
-    goTo(step.targetTab || "dashboard", step.targetId);
-  }
-  function markDone() {
-    setDone((d) => ({ ...d, [step.key]: true }));
-  }
-  const canNext = done[step.key] || i === STARTUP_STEPS.length - 1;
-
-  const canMarkDone = i === 0 || done[STARTUP_STEPS[i - 1].key];
+  const [index, setIndex] = useState(0);
+  const [reviewed, setReviewed] = useState<Record<string, boolean>>({});
+  const step = STARTUP_STEPS[index];
+  const canNext = reviewed[step.key] || index === STARTUP_STEPS.length - 1;
+  const canMarkReviewed = index === 0 || reviewed[STARTUP_STEPS[index - 1].key];
 
   return (
     <Card className="rounded-2xl">
-      <CardHeader className="pb-2"><CardTitle className="text-base">Startup Sequencer</CardTitle></CardHeader>
+      <CardHeader className="pb-2"><CardTitle className="text-base">Startup Guidance — simulation only</CardTitle></CardHeader>
       <CardContent>
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          Manual review marks are navigation aids only. They do not verify PLC state, interlocks, or machine readiness.
+        </div>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           <div className="lg:col-span-1 space-y-2">
-            {STARTUP_STEPS.map((s, idx) => (
-              <div key={s.key} className={`px-3 py-2 rounded-xl border text-sm cursor-pointer ${idx === i ? "bg-slate-100 border-slate-300" : "hover:bg-slate-50"}`} onClick={() => setI(idx)}>
+            {STARTUP_STEPS.map((item, itemIndex) => (
+              <button
+                type="button"
+                key={item.key}
+                className={`w-full text-left px-3 py-2 rounded-xl border text-sm ${itemIndex === index ? "bg-slate-100 border-slate-300" : "hover:bg-slate-50"}`}
+                onClick={() => setIndex(itemIndex)}
+              >
                 <div className="flex items-center justify-between">
-                  <div className="font-medium">{idx + 1}. {s.title}</div>
-                  {done[s.key] && <span className="text-emerald-600 text-xs">✔</span>}
+                  <div className="font-medium">{itemIndex + 1}. {item.title}</div>
+                  {reviewed[item.key] && <span className="text-blue-600 text-xs">Reviewed</span>}
                 </div>
-                <div className="text-muted-foreground text-xs">{s.desc}</div>
-                {s.hint && <div className="text-[10px] text-slate-500 mt-1">Hint: {s.hint}</div>}
-              </div>
+                <div className="text-muted-foreground text-xs">{item.desc}</div>
+              </button>
             ))}
           </div>
           <div className="lg:col-span-3">
             <div className="p-4 rounded-xl border bg-white space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm uppercase tracking-wide text-muted-foreground">Step {i + 1} of {STARTUP_STEPS.length}</div>
+                  <div className="text-sm uppercase tracking-wide text-muted-foreground">Guidance step {index + 1} of {STARTUP_STEPS.length}</div>
                   <div className="text-xl font-semibold">{step.title}</div>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={focusTarget}>Go to control</Button>
-                  <Button variant="secondary" onClick={markDone} disabled={!canMarkDone}>Mark done</Button>
+                  <Button variant="outline" onClick={() => goTo(step.targetTab || "dashboard", step.targetId)}>View related screen</Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setReviewed((current) => ({ ...current, [step.key]: true }))}
+                    disabled={!canMarkReviewed}
+                  >
+                    Mark reviewed — not verified
+                  </Button>
                 </div>
               </div>
               <p className="text-sm text-slate-600">{step.desc}</p>
-              {step.hint && (
-                <div className="text-xs text-slate-500">Signals involved: {step.hint}</div>
-              )}
+              {step.hint && <div className="text-xs text-slate-500">{step.hint}</div>}
               <div className="pt-2 flex gap-2">
-                <Button disabled={i === 0} onClick={() => setI(i - 1)} variant="ghost">Back</Button>
-                <Button disabled={!canNext} onClick={() => setI(Math.min(i + 1, STARTUP_STEPS.length - 1))}>Next</Button>
+                <Button disabled={index === 0} onClick={() => setIndex(index - 1)} variant="ghost">Back</Button>
+                <Button disabled={!canNext} onClick={() => setIndex(Math.min(index + 1, STARTUP_STEPS.length - 1))}>Next</Button>
               </div>
             </div>
           </div>
@@ -434,9 +573,7 @@ function StartupWizard({ goTo }: { goTo: (tab: string, id?: string) => void }) {
   );
 }
 
-// =========================================================
-// Logs
-// =========================================================
+
 function LogsTab() {
   const rows = [
     { t: "12:02:41", m: "CPS Rectifier ON" },
@@ -446,17 +583,18 @@ function LogsTab() {
   ];
   return (
     <Card className="rounded-2xl">
-      <CardHeader className="pb-2"><CardTitle className="text-base">Event Log (mock)</CardTitle></CardHeader>
+      <CardHeader className="pb-2"><CardTitle className="text-base">Event Log — demonstration data</CardTitle></CardHeader>
       <CardContent>
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+          These rows are static examples and are not current system or operator events.
+        </div>
         <div className="grid grid-cols-12 text-xs uppercase text-muted-foreground mb-2">
-          <div className="col-span-2">Time</div>
-          <div className="col-span-10">Message</div>
+          <div className="col-span-2">Time</div><div className="col-span-10">Message</div>
         </div>
         <div className="space-y-2">
-          {rows.map((r, i) => (
-            <div key={i} className="grid grid-cols-12 items-center text-sm bg-muted/30 rounded-xl px-3 py-2">
-              <div className="col-span-2 font-mono">{r.t}</div>
-              <div className="col-span-10">{r.m}</div>
+          {rows.map((row, index) => (
+            <div key={index} className="grid grid-cols-12 items-center text-sm bg-muted/30 rounded-xl px-3 py-2">
+              <div className="col-span-2 font-mono">{row.t}</div><div className="col-span-10">{row.m}</div>
             </div>
           ))}
         </div>
@@ -465,92 +603,119 @@ function LogsTab() {
   );
 }
 
-// =========================================================
-// Root
-// =========================================================
-import Login from "@/components/Login";
-import AdminTab from "./components/AdminTab";
 
 export default function GyrotronAdamDashboard() {
-  // Auth state
-  const [user, setUser] = useState<{ username: string, role: string } | null>(() => {
-    const u = localStorage.getItem("gyro_user");
-    const r = localStorage.getItem("gyro_role");
-    if (u && r) return { username: u, role: r };
-    return null;
-  });
-
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [tab, setTab] = useState("dashboard");
-  const [cpsOn] = useState(true);
-  const [apsOn] = useState(false);
-  const faults: string[] = [];
-  const { data, latest } = useTelemetry();
 
-  function handleLogin(username: string, role: string) {
-    localStorage.setItem("gyro_user", username);
-    localStorage.setItem("gyro_role", role);
-    setUser({ username, role });
-  }
-
-  function handleLogout() {
-    localStorage.removeItem("gyro_user");
-    localStorage.removeItem("gyro_role");
+  const handleUnauthorized = useCallback(() => {
     setUser(null);
-  }
+    setAuthError("Your session expired. Please sign in again.");
+  }, []);
 
-  if (!user) {
-    return <Login onLogin={handleLogin} />;
+  const telemetry = useTelemetry(user !== null, handleUnauthorized);
+  const system = useSystemStatus(user !== null, handleUnauthorized);
+
+  useEffect(() => {
+    let active = true;
+    api.getSession()
+      .then((sessionUser) => {
+        if (active) setUser(sessionUser);
+      })
+      .catch((caught) => {
+        if (active && (!(caught instanceof ApiError) || caught.status !== 401)) {
+          setAuthError("Unable to validate the current session.");
+        }
+      })
+      .finally(() => {
+        if (active) setAuthLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  async function handleLogout() {
+    try {
+      await api.logout();
+      setUser(null);
+      setAuthError(null);
+      setTab("dashboard");
+    } catch (caught) {
+      setAuthError(caught instanceof ApiError ? caught.message : "Sign out failed; your server session remains active.");
+    }
   }
 
   function goTo(tabName: string, id?: string) {
     setTab(tabName);
     if (id) {
-      // delay to allow tab to mount
       setTimeout(() => {
-        const el = document.getElementById(id);
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-          el.classList.add("ring", "ring-amber-400", "rounded-xl");
-          setTimeout(() => el.classList.remove("ring", "ring-amber-400", "rounded-xl"), 1500);
+        const element = document.getElementById(id);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+          element.classList.add("ring", "ring-amber-400", "rounded-xl");
+          setTimeout(() => element.classList.remove("ring", "ring-amber-400", "rounded-xl"), 1500);
         }
       }, 50);
     }
   }
 
+  if (authLoading) {
+    return <div className="min-h-screen grid place-items-center bg-slate-100 text-sm text-slate-600">Validating application session…</div>;
+  }
+  if (!user) {
+    return (
+      <div>
+        {authError && <div className="bg-red-100 p-2 text-center text-sm text-red-800" role="alert">{authError}</div>}
+        <Login onLogin={(sessionUser) => { setUser(sessionUser); setAuthError(null); }} />
+      </div>
+    );
+  }
+
+  const displayOverall: DisplayState = system.statusState !== "live"
+    ? system.statusState
+    : telemetry.dataState !== "live"
+      ? telemetry.dataState
+      : system.systemStatus?.overall_state ?? "unknown";
+  const authoritativeStatus = system.statusState === "live" ? system.systemStatus : null;
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 text-slate-900">
-      <header className="sticky top-0 z-30 backdrop-blur bg-white/70 border-b">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-30 backdrop-blur bg-white/90 border-b">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="size-8 rounded-xl bg-slate-900 text-white grid place-items-center">GT</div>
             <div>
               <div className="font-semibold">Gyrotron Power Control</div>
-              <div className="text-xs text-muted-foreground">ADAM-5000E • CPS / APS / Interlocks</div>
+              <div className="text-xs text-muted-foreground">Simulation HMI · CPS / APS / Interlocks</div>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <StatusDot ok={faults.length === 0} />
-              <span className="text-sm">{faults.length === 0 ? "Nominal" : "Fault"}</span>
-            </div>
+            <div className="flex items-center gap-2"><StatusDot state={displayOverall} /><span className="text-sm">{displayOverall.toUpperCase()}</span></div>
             <div className="flex items-center gap-2 border-l pl-4">
               <span className="text-sm font-medium text-slate-600">{user.username} <span className="text-xs text-muted-foreground">({user.role})</span></span>
-              {user.role === 'admin' && (
-                <Button variant="ghost" size="sm" onClick={() => setTab("admin")} className="h-8 text-xs text-muted-foreground hover:text-blue-600 mr-1">
-                  Admin
-                </Button>
+              {user.role === "admin" && (
+                <Button variant="ghost" size="sm" onClick={() => setTab("admin")} className="h-8 text-xs text-muted-foreground hover:text-blue-600 mr-1">Admin</Button>
               )}
-              <Button variant="ghost" size="sm" onClick={handleLogout} className="h-8 text-xs text-muted-foreground hover:text-red-600">
-                Sign out
-              </Button>
+              <Button variant="ghost" size="sm" onClick={() => void handleLogout()} className="h-8 text-xs text-muted-foreground hover:text-red-600">Sign out</Button>
             </div>
           </div>
         </div>
       </header>
 
+      <ModeBanner
+        status={system.systemStatus}
+        statusState={system.statusState}
+        telemetryState={telemetry.dataState}
+        statusError={system.error}
+        telemetryError={telemetry.error}
+      />
+
+      {authError && <div className="max-w-7xl mx-auto mt-4 rounded-lg bg-red-100 p-3 text-sm text-red-800" role="alert">{authError}</div>}
+
       <main className="max-w-7xl mx-auto px-4 py-6">
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="rounded-2xl">
+          <TabsList className="rounded-2xl flex flex-wrap h-auto">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="power">Power</TabsTrigger>
             <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
@@ -560,34 +725,35 @@ export default function GyrotronAdamDashboard() {
             <TabsTrigger value="logs">Logs</TabsTrigger>
           </TabsList>
           <div className="mt-6" />
-          <TabsContent value="dashboard"><Dashboard cpsOn={cpsOn} apsOn={apsOn} faults={faults} data={data} latest={latest} /></TabsContent>
-          <TabsContent value="power"><PowerTab /></TabsContent>
-          <TabsContent value="monitoring"><MonitoringTab data={data} latest={latest} /></TabsContent>
+          <TabsContent value="dashboard">
+            <Dashboard
+              status={authoritativeStatus}
+              data={telemetry.data}
+              latest={telemetry.latest}
+              telemetryState={telemetry.dataState}
+              lastSuccessfulAt={telemetry.lastSuccessfulAt}
+            />
+          </TabsContent>
+          <TabsContent value="power"><PowerTab status={authoritativeStatus} /></TabsContent>
+          <TabsContent value="monitoring"><MonitoringTab data={telemetry.data} latest={telemetry.latest} dataState={telemetry.dataState} /></TabsContent>
           <TabsContent value="flow"><PowerFlowTab /></TabsContent>
-          <TabsContent value="safety"><SafetyTab /></TabsContent>
+          <TabsContent value="safety"><SafetyTab status={authoritativeStatus} /></TabsContent>
           <TabsContent value="startup"><StartupWizard goTo={goTo} /></TabsContent>
           <TabsContent value="logs"><LogsTab /></TabsContent>
-          <TabsContent value="admin"><AdminTab /></TabsContent>
+          {user.role === "admin" && <TabsContent value="admin"><AdminTab /></TabsContent>}
         </Tabs>
       </main>
     </div>
   );
 }
 
-// =========================================================
-// Lightweight DEV tests (run in dev only)
-// These are not unit-test framework tests, but quick runtime invariants
-// =========================================================
-if (typeof window !== "undefined" && (import.meta as any)?.env?.MODE !== "production") {
-  // Test 1: step keys are unique
-  const keys = STARTUP_STEPS.map(s => s.key);
-  console.assert(new Set(keys).size === keys.length, "Duplicate keys in STARTUP_STEPS");
 
-  // Test 2: ordering constraints
-  function indexOf(k: string) { return STARTUP_STEPS.findIndex(s => s.key === k); }
-  console.assert(indexOf("cps_rect") < indexOf("cps_conv"), "CPS rectifier must precede converter");
-  console.assert(indexOf("set_cath") < indexOf("apply"), "Set cathode before Apply");
-  console.assert(indexOf("set_an") < indexOf("apply"), "Set anode before Apply");
-  console.assert(indexOf("aps_rect") < indexOf("aps_conv"), "APS rectifier must precede converter");
-  console.assert(indexOf("apply") < indexOf("verify"), "Apply must precede Verify");
+if (typeof window !== "undefined" && import.meta.env.MODE !== "production") {
+  const keys = STARTUP_STEPS.map((step) => step.key);
+  console.assert(new Set(keys).size === keys.length, "Duplicate keys in STARTUP_STEPS");
+  const indexOf = (key: string) => STARTUP_STEPS.findIndex((step) => step.key === key);
+  console.assert(indexOf("cps_rect") < indexOf("cps_conv"), "CPS rectifier guidance must precede converter guidance");
+  console.assert(indexOf("set_cath") < indexOf("apply"), "Cathode draft must precede Apply guidance");
+  console.assert(indexOf("set_an") < indexOf("apply"), "Anode draft must precede Apply guidance");
+  console.assert(indexOf("aps_rect") < indexOf("aps_conv"), "APS rectifier guidance must precede converter guidance");
 }

@@ -1,100 +1,184 @@
-from fastapi import APIRouter
-from app.core import safety
-from app.opcua import client
 import math
 import time
+from datetime import datetime, timezone
+from typing import Callable
 
-router = APIRouter()
-
-# Simple mock state
-start_time = time.time()
-
-from pydantic import BaseModel
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.core.auth import authenticate_user
-from fastapi import HTTPException
+from app.core.config import get_settings
+from app.core.sessions import (
+    ApplicationSession,
+    get_current_session,
+    require_admin,
+    session_manager,
+)
+from app.core.system_status import get_system_status
+from app.core.users import (
+    LastAdministratorError,
+    UserAlreadyExists,
+    UserManager,
+    UserNotFound,
+    UserStorageError,
+    user_manager,
+)
+from app.models import (
+    DataSource,
+    LoginRequest,
+    MessageResponse,
+    SessionUser,
+    SystemStatus,
+    TelemetryPoint,
+    UserCreateRequest,
+    UserRecord,
+    UserRemoveRequest,
+    UserUpdateRequest,
+    UsersResponse,
+)
 
-from app.core.auth import authenticate_user
-from app.core.users import user_manager
-from fastapi import HTTPException
-from pydantic import BaseModel
 
-class UserAction(BaseModel):
-    username: str
-    role: str = "user" # Default if not provided
+router = APIRouter(prefix="/api")
+start_time = time.monotonic()
 
-@router.post("/login")
-async def login(creds: LoginRequest):
-    # 1. Verify credentials with LDAP
-    if authenticate_user(creds.username, creds.password):
-        # 2. Check whitelist and get role
-        role = user_manager.get_role(creds.username)
-        if not role:
-             raise HTTPException(status_code=403, detail="Access denied. User not authorized.")
-             
-        # Return a simple token and role
-        return {
-            "token": "real-ldap-session-token",
-            "username": creds.username,
-            "role": role 
-        }
-    else:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-@router.get("/users")
-async def get_users():
+def _session_response(session: ApplicationSession) -> SessionUser:
+    return SessionUser(
+        username=session.username,
+        role=session.role,
+        expires_at=session.expires_at,
+    )
+
+
+@router.post("/login", response_model=SessionUser)
+def login(credentials: LoginRequest, response: Response) -> SessionUser:
+    if not authenticate_user(credentials.username, credentials.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    role = user_manager.get_role(credentials.username)
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not authorized")
+
+    settings = get_settings()
+    session = session_manager.create(credentials.username, role)
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=session.token,
+        max_age=settings.session_ttl_seconds,
+        expires=session.expires_at,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+    return _session_response(session)
+
+
+@router.get("/session", response_model=SessionUser)
+def get_session(session: ApplicationSession = Depends(get_current_session)) -> SessionUser:
+    return _session_response(session)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    request: Request,
+    response: Response,
+    _: ApplicationSession = Depends(get_current_session),
+) -> Response:
+    settings = get_settings()
+    session_manager.destroy(request.cookies.get(settings.session_cookie_name))
+    response.delete_cookie(
+        key=settings.session_cookie_name,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@router.get("/users", response_model=list[UserRecord])
+def get_users(_: ApplicationSession = Depends(require_admin)) -> list[UserRecord]:
     return user_manager.get_users()
 
-@router.post("/users/add")
-async def add_user(action: UserAction):
-    # Only admins should be able to do this, but for now we trust the UI/Auth flow
-    user_manager.add_user(action.username, action.role)
-    return {"status": "ok", "users": user_manager.get_users()}
 
-@router.post("/users/update")
-async def update_user(action: UserAction):
-    user_manager.update_role(action.username, action.role)
-    return {"status": "ok", "users": user_manager.get_users()}
+def _user_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, UserAlreadyExists):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    if isinstance(exc, UserNotFound):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if isinstance(exc, LastAdministratorError):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="User store operation failed",
+    )
 
-@router.post("/users/remove")
-async def remove_user(action: UserAction):
-    user_manager.remove_user(action.username)
-    return {"status": "ok", "users": user_manager.get_users()}
 
-@router.get("/telemetry")
-async def get_telemetry():
-    # Simulate time "t" as integer steps since server start (similar to frontend behavior)
-    # Frontend was approx 1 step every 1.2s.
-    elapsed = time.time() - start_time
-    x = int(elapsed) # Use seconds as the "time" x-axis
-    
-    # Generate mock values using the same math as the frontend
-    # Note: adjusting frequency to match seconds scale
-    # Frontend: sin((x / 6) * PI) where x was incrementing every 1.2s
-    # We'll just use x (seconds) directly
-    
-    data = {
-        "time": x,
-        "ionV": 4.5 + math.sin((x / 6) * math.pi) * 0.6,
-        "ionI": 1.8 + math.cos((x / 8) * math.pi) * 0.4,
-        "heatV": 7.0 + math.sin((x / 5) * math.pi) * 0.8,
-        "heatI": 3.2 + math.cos((x / 7) * math.pi) * 0.5,
-        "heLvl": 68 + math.sin((x / 10) * math.pi) * 6,
-        "Thot": 62 + math.sin((x / 9) * math.pi) * 3,
-        "Tcold": 28 + math.cos((x / 9) * math.pi) * 3,
-    }
-    return data
+def _apply_user_change(operation: Callable[[UserManager], None]) -> UsersResponse:
+    try:
+        operation(user_manager)
+    except (UserAlreadyExists, UserNotFound, LastAdministratorError, UserStorageError) as exc:
+        raise _user_error(exc) from exc
+    return UsersResponse(users=user_manager.get_users())
 
-@router.get("/status")
-async def get_system_status():
-    # Placeholder: fetch status from OPC UA via core logic
-    return {"status": "operational", "safety_ok": safety.check_safety_interlocks()}
 
-@router.post("/setpoint")
-async def set_parameters(voltage: float):
-    # Placeholder: validate and send to OPC UA
-    return {"message": f"Setpoint {voltage}V received"}
+@router.post("/users/add", response_model=UsersResponse, status_code=status.HTTP_201_CREATED)
+def add_user(
+    action: UserCreateRequest,
+    _: ApplicationSession = Depends(require_admin),
+) -> UsersResponse:
+    return _apply_user_change(lambda manager: manager.add_user(action.username, action.role))
+
+
+@router.post("/users/update", response_model=UsersResponse)
+def update_user(
+    action: UserUpdateRequest,
+    _: ApplicationSession = Depends(require_admin),
+) -> UsersResponse:
+    return _apply_user_change(lambda manager: manager.update_role(action.username, action.role))
+
+
+@router.post("/users/remove", response_model=UsersResponse)
+def remove_user(
+    action: UserRemoveRequest,
+    _: ApplicationSession = Depends(require_admin),
+) -> UsersResponse:
+    return _apply_user_change(lambda manager: manager.remove_user(action.username))
+
+
+@router.get("/telemetry", response_model=TelemetryPoint)
+async def get_telemetry(
+    _: ApplicationSession = Depends(get_current_session),
+) -> TelemetryPoint:
+    elapsed = time.monotonic() - start_time
+    sequence = int(elapsed)
+    return TelemetryPoint(
+        timestamp=datetime.now(timezone.utc),
+        source=DataSource.SIMULATION,
+        sequence=sequence,
+        ionV=4.5 + math.sin((elapsed / 6) * math.pi) * 0.6,
+        ionI=1.8 + math.cos((elapsed / 8) * math.pi) * 0.4,
+        heatV=7.0 + math.sin((elapsed / 5) * math.pi) * 0.8,
+        heatI=3.2 + math.cos((elapsed / 7) * math.pi) * 0.5,
+        heLvl=68 + math.sin((elapsed / 10) * math.pi) * 6,
+        Thot=62 + math.sin((elapsed / 9) * math.pi) * 3,
+        Tcold=28 + math.cos((elapsed / 9) * math.pi) * 3,
+    )
+
+
+@router.get("/status", response_model=SystemStatus)
+async def system_status(
+    _: ApplicationSession = Depends(get_current_session),
+) -> SystemStatus:
+    return get_system_status()
+
+
+@router.post("/setpoint", response_model=MessageResponse)
+async def set_parameters(
+    _: ApplicationSession = Depends(get_current_session),
+) -> MessageResponse:
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Hardware setpoint commands are unavailable in simulation mode",
+    )
