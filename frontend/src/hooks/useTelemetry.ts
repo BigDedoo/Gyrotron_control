@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "@/api/client";
-import type { DataState, TelemetryPoint } from "@/api/types";
+import type { DataState, SignalQuality, SignalValue, TelemetryPoint } from "@/api/types";
 
 
 const POLL_DELAY_MS = 1000;
@@ -10,24 +10,35 @@ const STALE_AFTER_MS = 5000;
 const BUFFER_SIZE = 40;
 
 
-function validateTelemetry(point: TelemetryPoint): void {
-  const values = [
-    point.sequence,
-    point.ionV,
-    point.ionI,
-    point.heatV,
-    point.heatI,
-    point.heLvl,
-    point.Thot,
-    point.Tcold,
-  ];
+const SIGNAL_KEYS = ["ionV", "ionI", "heatV", "heatI", "heLvl", "Thot", "Tcold"] as const;
+const QUALITY_VALUES: SignalQuality[] = ["good", "uncertain", "bad", "unavailable"];
+
+
+function validateSignal(sample: SignalValue): void {
+  const usable = sample.quality === "good" || sample.quality === "uncertain";
   if (
-    point.source !== "simulation" ||
+    !QUALITY_VALUES.includes(sample.quality) ||
+    sample.unit.length === 0 ||
+    (sample.source_timestamp !== null && Number.isNaN(Date.parse(sample.source_timestamp))) ||
+    (usable && (sample.value === null || !Number.isFinite(sample.value))) ||
+    (!usable && sample.value !== null)
+  ) {
+    throw new Error("Telemetry signal is malformed");
+  }
+}
+
+
+function validateTelemetry(point: TelemetryPoint): DataState {
+  if (
+    !["simulation", "opcua"].includes(point.source) ||
     Number.isNaN(Date.parse(point.timestamp)) ||
-    values.some((value) => !Number.isFinite(value))
+    !Number.isFinite(point.sequence)
   ) {
     throw new Error("Telemetry response is malformed");
   }
+  const samples = SIGNAL_KEYS.map((key) => point[key]);
+  samples.forEach(validateSignal);
+  return samples.every((sample) => sample.quality === "good") ? "live" : "degraded";
 }
 
 
@@ -71,12 +82,12 @@ export function useTelemetry(enabled: boolean, onUnauthorized: () => void) {
 
       try {
         const point = await api.getTelemetry(currentController.signal);
-        validateTelemetry(point);
+        const nextState = validateTelemetry(point);
         if (!active) return;
         setData((previous) => [...previous, point].slice(-BUFFER_SIZE));
-        setDataState("live");
-        setLastSuccessfulAt(new Date().toISOString());
-        setError(null);
+        setDataState(nextState);
+        setLastSuccessfulAt(point.timestamp);
+        setError(nextState === "degraded" ? "One or more telemetry signals are degraded." : null);
         scheduleStale();
       } catch (caught) {
         if (!active) return;
@@ -84,8 +95,20 @@ export function useTelemetry(enabled: boolean, onUnauthorized: () => void) {
           onUnauthorized();
           return;
         }
-        setError(timedOut ? "Telemetry request timed out." : "Telemetry is unavailable.");
-        setDataState((current) => (current === "live" ? current : "unavailable"));
+        if (caught instanceof ApiError && caught.status === 503) {
+          const backendState = caught.message.toLowerCase().includes("unavailable")
+            ? "unavailable"
+            : "stale";
+          setError(caught.message);
+          setDataState(backendState);
+        } else {
+          setError(timedOut ? "Telemetry request timed out." : "Telemetry is unavailable.");
+          setDataState((current) =>
+            current === "live" || current === "degraded" || current === "stale"
+              ? "stale"
+              : "unavailable"
+          );
+        }
       } finally {
         clearTimeout(timeout);
         if (active) pollTimer = setTimeout(poll, POLL_DELAY_MS);

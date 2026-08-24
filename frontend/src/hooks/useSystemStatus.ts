@@ -37,13 +37,16 @@ export function useSystemStatus(enabled: boolean, onUnauthorized: () => void) {
 
       try {
         const nextStatus = await api.getSystemStatus(currentController.signal);
-        if (nextStatus.mode !== "simulation" || Number.isNaN(Date.parse(nextStatus.timestamp))) {
+        const sourceMatchesMode =
+          (nextStatus.mode === "simulation" && nextStatus.source === "simulation") ||
+          (nextStatus.mode === "opcua_readonly" && nextStatus.source === "opcua");
+        if (!sourceMatchesMode || Number.isNaN(Date.parse(nextStatus.timestamp))) {
           throw new Error("System status response is malformed");
         }
         if (!active) return;
         setSystemStatus(nextStatus);
         setStatusState("live");
-        setError(null);
+        setError(nextStatus.monitor_error);
         if (staleTimer) clearTimeout(staleTimer);
         staleTimer = setTimeout(() => {
           if (active) {
