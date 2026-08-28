@@ -33,6 +33,79 @@ def test_client_connects_reads_typed_values_and_disconnects():
     asyncio.run(scenario())
 
 
+def test_client_accepts_finite_integer_when_mapping_expects_integer():
+    async def scenario() -> None:
+        simulator = LocalOPCUASimulator(integer_signal=LogicalSignal.ION_V)
+        await simulator.start()
+        client = ReadOnlyOPCUAClient(
+            make_opcua_settings(simulator.endpoint_url, Path(__file__))
+        )
+        try:
+            await client.connect()
+            values = await client.read_signals(
+                simulator.node_map(integer_type=LogicalSignal.ION_V).signals
+            )
+            sample = values[LogicalSignal.ION_V]
+            assert sample.value == 4.0
+            assert sample.quality == SignalQuality.GOOD
+        finally:
+            await client.disconnect()
+            await simulator.stop()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [float("nan"), float("inf"), float("-inf")],
+    ids=["nan", "positive-infinity", "negative-infinity"],
+)
+def test_non_finite_opcua_numeric_values_are_bad_and_value_less(invalid: float):
+    async def scenario() -> None:
+        simulator = LocalOPCUASimulator(
+            telemetry_values={LogicalSignal.ION_V: invalid}
+        )
+        await simulator.start()
+        client = ReadOnlyOPCUAClient(
+            make_opcua_settings(simulator.endpoint_url, Path(__file__))
+        )
+        try:
+            await client.connect()
+            values = await client.read_signals(simulator.node_map().signals)
+            invalid_sample = values[LogicalSignal.ION_V]
+            assert invalid_sample.value is None
+            assert invalid_sample.quality == SignalQuality.BAD
+            assert values[LogicalSignal.ION_I].quality == SignalQuality.GOOD
+        finally:
+            await client.disconnect()
+            await simulator.stop()
+
+    asyncio.run(scenario())
+
+
+def test_non_finite_scaled_result_is_bad_and_value_less():
+    async def scenario() -> None:
+        simulator = LocalOPCUASimulator()
+        await simulator.start()
+        client = ReadOnlyOPCUAClient(
+            make_opcua_settings(simulator.endpoint_url, Path(__file__))
+        )
+        try:
+            await client.connect()
+            mapping = simulator.node_map().by_signal()[LogicalSignal.ION_V]
+            mapping = mapping.__class__.model_validate(
+                {**mapping.model_dump(mode="json"), "scale": 1e308}
+            )
+            sample = await client.read_signal(mapping)
+            assert sample.value is None
+            assert sample.quality == SignalQuality.BAD
+        finally:
+            await client.disconnect()
+            await simulator.stop()
+
+    asyncio.run(scenario())
+
+
 def test_client_reports_unavailable_server_and_disconnects_cleanly():
     async def scenario() -> None:
         port = unused_local_port()

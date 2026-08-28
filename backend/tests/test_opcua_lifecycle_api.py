@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +22,11 @@ from app.models import (
 from app.opcua.client import ReadOnlyOPCUAClient
 from app.opcua.monitor import MonitorView
 from app.opcua.node_map import LogicalSignal
-from tests.opcua_simulator import TEST_UNITS, make_opcua_settings
+from tests.opcua_simulator import (
+    TEST_UNITS,
+    LocalOPCUASimulator,
+    make_opcua_settings,
+)
 
 
 def _node_map_file(path: Path) -> Path:
@@ -172,6 +177,64 @@ def test_readonly_api_returns_explicit_unavailable_without_snapshot(tmp_path: Pa
         response = client.get("/api/telemetry")
         assert response.status_code == 503
         assert response.json()["detail"] == "OPC UA telemetry is unavailable"
+
+
+def test_non_finite_opcua_sample_is_safe_before_api_json_serialization(
+    tmp_path: Path,
+    user_manager,
+):
+    async def read_snapshot() -> TelemetryPoint:
+        simulator = LocalOPCUASimulator(
+            telemetry_values={LogicalSignal.ION_V: float("nan")}
+        )
+        await simulator.start()
+        opcua_client = ReadOnlyOPCUAClient(
+            make_opcua_settings(simulator.endpoint_url, Path(__file__))
+        )
+        try:
+            await opcua_client.connect()
+            values = await opcua_client.read_signals(simulator.node_map().signals)
+            now = datetime.now(timezone.utc)
+            snapshot = TelemetryPoint(
+                timestamp=now,
+                source=DataSource.OPCUA,
+                sequence=1,
+                **{signal.value: values[signal] for signal in LogicalSignal},
+            )
+            return snapshot
+        finally:
+            await opcua_client.disconnect()
+            await simulator.stop()
+
+    snapshot = asyncio.run(read_snapshot())
+    assert snapshot.ionV.value is None
+    assert snapshot.ionV.quality == SignalQuality.BAD
+
+    node_map_path = _node_map_file(tmp_path / "nodes.json")
+    opcua = make_opcua_settings("opc.tcp://127.0.0.1:4840/test/", node_map_path)
+    now = datetime.now(timezone.utc)
+    monitor = FakeMonitor(
+        MonitorView(
+            connection_state=ConnectionState.CONNECTED,
+            data_state=DataState.DEGRADED,
+            last_connection_attempt=now,
+            last_successful_read=now,
+            snapshot=snapshot,
+            error="One or more configured OPC UA signals are degraded",
+        )
+    )
+    app = create_app(
+        _app_settings(AppMode.OPCUA_READONLY, tmp_path / "events.sqlite3", opcua),
+        monitor_factory=lambda _settings, _node_map: monitor,
+    )
+
+    with _authenticated_client(app, user_manager) as client:
+        response = client.get("/api/telemetry")
+        assert response.status_code == 200
+        assert response.json()["ionV"]["value"] is None
+        assert response.json()["ionV"]["quality"] == "bad"
+        assert b"NaN" not in response.content
+        json.dumps(response.json(), allow_nan=False)
 
 
 def test_readonly_boundary_exposes_no_write_capability(client, authenticate):

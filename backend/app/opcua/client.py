@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from typing import Any
@@ -68,7 +69,13 @@ def _normalize_value(raw: Any, mapping: NodeMapping) -> float:
             raise TypeError("OPC UA value is not the configured integer type")
     elif not isinstance(raw, float):
         raise TypeError("OPC UA value is not the configured floating-point type")
-    return float(raw) * mapping.scale + mapping.offset
+    numeric = float(raw)
+    if not math.isfinite(numeric):
+        raise ValueError("OPC UA numeric value is not finite")
+    normalized = numeric * mapping.scale + mapping.offset
+    if not math.isfinite(normalized):
+        raise ValueError("normalized OPC UA numeric value is not finite")
+    return normalized
 
 
 def _normalize_state_value(raw: Any, mapping: StateNodeMapping) -> bool | int:

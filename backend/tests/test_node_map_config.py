@@ -43,6 +43,65 @@ def test_production_node_map_requires_every_unique_logical_signal(tmp_path: Path
         load_node_map(missing)
 
 
+def test_unknown_top_level_node_map_property_is_rejected(tmp_path: Path):
+    path = tmp_path / "unknown-top-level.json"
+    _write_map(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["unexpected"] = True
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(NodeMapError):
+        load_node_map(path)
+
+
+def test_unknown_telemetry_mapping_property_is_rejected(tmp_path: Path):
+    path = tmp_path / "unknown-telemetry.json"
+    _write_map(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["signals"][0]["engineering_range"] = [0, 100]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(NodeMapError):
+        load_node_map(path)
+
+
+def test_scale_typo_is_rejected_instead_of_using_default(tmp_path: Path):
+    path = tmp_path / "scale-typo.json"
+    _write_map(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["signals"][0]["scsale"] = 100
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(NodeMapError):
+        load_node_map(path)
+
+
+def test_unknown_state_mapping_property_is_rejected(tmp_path: Path):
+    path = tmp_path / "unknown-state.json"
+    _write_map(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["state_signals"] = [
+        {
+            "signal": "interlock.gs_doors",
+            "node_id": "ns=2;s=Approved.Interlock.Doors",
+            "expected_type": "boolean",
+            "interpretation": {"true": "ok", "false": "fault"},
+            "unexpected": "ignored-before-hardening",
+        }
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(NodeMapError):
+        load_node_map(path)
+
+
+def test_committed_example_node_map_remains_valid():
+    example = Path(__file__).resolve().parents[1] / "config" / "opcua_nodes.example.json"
+    node_map = load_node_map(example, allowed_purposes=frozenset({"template"}))
+
+    assert set(node_map.by_signal()) == set(LogicalSignal)
+
+
 def test_template_and_placeholder_maps_cannot_be_used_as_production(tmp_path: Path):
     template = tmp_path / "template.json"
     _write_map(template, purpose="template")

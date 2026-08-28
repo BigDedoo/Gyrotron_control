@@ -58,9 +58,11 @@ class LocalOPCUASimulator:
         port: int | None = None,
         *,
         integer_signal: LogicalSignal | None = None,
+        telemetry_values: dict[LogicalSignal, float | int] | None = None,
     ) -> None:
         self.port = port or unused_local_port()
         self.integer_signal = integer_signal
+        self.telemetry_values = {**TEST_VALUES, **(telemetry_values or {})}
         self.endpoint_url = f"opc.tcp://127.0.0.1:{self.port}/gyrotron-test/"
         self.server: Server | None = None
         self.node_ids: dict[LogicalSignal, str] = {}
@@ -74,7 +76,7 @@ class LocalOPCUASimulator:
         namespace = await server.register_namespace("urn:gyrotron:test:readonly")
         gyrotron = await server.nodes.objects.add_object(namespace, "TestGyrotron")
         self.node_ids = {}
-        for signal, value in TEST_VALUES.items():
+        for signal, value in self.telemetry_values.items():
             node_id = ua.NodeId(f"TestGyrotron.{signal.value}", namespace)
             server_value = int(value) if signal == self.integer_signal else value
             await gyrotron.add_variable(node_id, signal.value, server_value)

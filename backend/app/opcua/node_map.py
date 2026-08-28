@@ -111,7 +111,7 @@ def state_signal_label(signal: LogicalStateSignal) -> str:
 
 
 class NodeMapping(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     signal: LogicalSignal
     node_id: str = Field(min_length=1, max_length=512)
@@ -159,7 +159,7 @@ class NodeMapping(BaseModel):
 
 
 class StateNodeMapping(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     signal: LogicalStateSignal
     node_id: str = Field(min_length=1, max_length=512)
@@ -231,7 +231,7 @@ class StateNodeMapping(BaseModel):
 
 
 class NodeMap(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: int = Field(ge=1, le=1)
     purpose: str = Field(min_length=1, max_length=32)
