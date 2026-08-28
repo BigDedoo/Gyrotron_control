@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
-from asyncua import Client
+from asyncua import Client, ua
+from asyncua.crypto import security_policies
 
 from app.core.config import OPCUASettings
 from app.models import (
@@ -29,6 +30,13 @@ from app.opcua.node_map import (
 
 
 logger = logging.getLogger(__name__)
+
+
+SECURITY_POLICIES = {
+    "Basic256Sha256": security_policies.SecurityPolicyBasic256Sha256,
+    "Aes128Sha256RsaOaep": security_policies.SecurityPolicyAes128Sha256RsaOaep,
+    "Aes256Sha256RsaPss": security_policies.SecurityPolicyAes256Sha256RsaPss,
+}
 
 
 class OPCUAClientError(RuntimeError):
@@ -142,21 +150,18 @@ class ReadOnlyOPCUAClient:
             )
             try:
                 if self.settings.security_policy != "None":
-                    certificate = str(self.settings.client_certificate_path)
-                    private_key = str(self.settings.client_private_key_path)
-                    if self.settings.client_private_key_password is not None:
-                        private_key += "::" + self.settings.client_private_key_password.get_secret_value()
-                    security = ",".join(
-                        [
-                            self.settings.security_policy,
-                            self.settings.security_mode,
-                            certificate,
-                            private_key,
-                        ]
+                    await client.set_security(
+                        SECURITY_POLICIES[self.settings.security_policy],
+                        self.settings.client_certificate_path,
+                        self.settings.client_private_key_path,
+                        private_key_password=(
+                            self.settings.client_private_key_password.get_secret_value()
+                            if self.settings.client_private_key_password is not None
+                            else None
+                        ),
+                        server_certificate=self.settings.server_certificate_path,
+                        mode=ua.MessageSecurityMode.SignAndEncrypt,
                     )
-                    if self.settings.server_certificate_path is not None:
-                        security += "," + str(self.settings.server_certificate_path)
-                    await client.set_security_string(security)
                 if self.settings.username is not None and self.settings.password is not None:
                     client.set_user(self.settings.username)
                     client.set_password(self.settings.password.get_secret_value())

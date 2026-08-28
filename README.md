@@ -207,7 +207,7 @@ Boolean mappings must contain both `true` and `false`; there is no global polari
 
 The bundled `backend/config/opcua_nodes.example.json` is marked `purpose=template` and uses test-only identifiers. The application rejects it in `opcua_readonly`. Copy it to an untracked/local configuration file, replace every mapping with approved production data, review it, and set `purpose=production`. The seven telemetry mappings remain mandatory. Production state mapping may be partial during commissioning: every absent logical state is listed in coverage and exposed as `UNKNOWN`, never fabricated. Placeholder/test NodeIds and malformed mappings are rejected.
 
-For secure OPC UA, configure an explicit supported `OPCUA_SECURITY_POLICY`, `OPCUA_SECURITY_MODE`, client certificate and private key; an optional pinned server certificate is supported. Optional username/password authentication must be configured as a pair. Security setup failures abort the connection and never downgrade to insecure OPC UA. Do not commit credentials, certificates or private keys.
+Non-local OPC UA requires `SignAndEncrypt`, an explicitly configured supported `OPCUA_SECURITY_POLICY`, a client certificate/private key, and an explicitly pinned trusted server certificate. Optional username/password authentication must be configured as a pair and is rejected on an insecure channel. `OPCUA_ALLOW_INSECURE_LOCALHOST=true` permits `None` security only for `127.0.0.1`, `::1`, or `localhost` development/tests. Security setup failures abort the connection and reconnect with the same approved profile; there is no insecure fallback. Do not commit credentials, certificates or private keys.
 
 ### Connection and quality semantics
 

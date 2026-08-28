@@ -124,10 +124,10 @@ def test_template_and_placeholder_maps_cannot_be_used_as_production(tmp_path: Pa
         load_node_map(copied_template)
 
 
-def test_secure_configuration_cannot_silently_downgrade(tmp_path: Path):
+def test_secure_configuration_requires_client_certificate(tmp_path: Path):
     node_map = tmp_path / "nodes.json"
     _write_map(node_map)
-    with pytest.raises(ValidationError, match="client certificate and private key"):
+    with pytest.raises(ValidationError, match="client certificate"):
         OPCUASettings(
             endpoint_url="opc.tcp://127.0.0.1:4840/",
             connect_timeout_seconds=1,

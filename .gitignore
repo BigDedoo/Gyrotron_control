@@ -27,3 +27,11 @@ dist/
 # PLC
 *.tpy
 *.tMC
+
+# Local OPC UA security material (tests generate certificates in temporary paths)
+backend/security/
+backend/certificates/
+*.key
+*.key.pem
+*.p12
+*.pfx

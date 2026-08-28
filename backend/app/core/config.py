@@ -59,6 +59,7 @@ class OPCUASettings(BaseModel):
     server_certificate_path: Path | None = None
     username: str | None = Field(default=None, max_length=256)
     password: SecretStr | None = None
+    allow_insecure_localhost: bool = False
 
     @field_validator("endpoint_url")
     @classmethod
@@ -76,16 +77,23 @@ class OPCUASettings(BaseModel):
     @field_validator("security_policy")
     @classmethod
     def validate_security_policy(cls, value: str) -> str:
-        allowed = {"None", "Basic256Sha256", "Aes128Sha256RsaOaep", "Aes256Sha256RsaPss"}
-        if value not in allowed:
+        value = value.strip()
+        allowed = {
+            "None",
+            "Basic256Sha256",
+            "Aes128Sha256RsaOaep",
+            "Aes256Sha256RsaPss",
+        }
+        if value and value not in allowed:
             raise ValueError(f"OPCUA_SECURITY_POLICY must be one of {sorted(allowed)}")
         return value
 
     @field_validator("security_mode")
     @classmethod
     def validate_security_mode(cls, value: str) -> str:
+        value = value.strip()
         allowed = {"None", "Sign", "SignAndEncrypt"}
-        if value not in allowed:
+        if value and value not in allowed:
             raise ValueError(f"OPCUA_SECURITY_MODE must be one of {sorted(allowed)}")
         return value
 
@@ -100,32 +108,59 @@ class OPCUASettings(BaseModel):
                 "OPCUA_STALE_AFTER_SECONDS must exceed twice the monitor interval"
             )
 
-        secure = self.security_policy != "None" or self.security_mode != "None"
-        if secure:
-            if self.security_policy == "None" or self.security_mode == "None":
-                raise ValueError("secure OPC UA requires both a policy and message security mode")
-            if self.client_certificate_path is None or self.client_private_key_path is None:
-                raise ValueError("secure OPC UA requires a client certificate and private key")
-            for path, label in (
-                (self.client_certificate_path, "client certificate"),
-                (self.client_private_key_path, "client private key"),
-            ):
-                if path is None or not path.is_file():
-                    raise ValueError(f"OPC UA {label} file does not exist")
-            if self.server_certificate_path is not None and not self.server_certificate_path.is_file():
-                raise ValueError("OPC UA server certificate file does not exist")
-        elif any(
-            path is not None
-            for path in (
-                self.client_certificate_path,
-                self.client_private_key_path,
-                self.server_certificate_path,
-            )
-        ):
-            raise ValueError("certificate paths require an explicit secure OPC UA policy and mode")
-
         if (self.username is None) != (self.password is None):
             raise ValueError("OPCUA_USERNAME and OPCUA_PASSWORD must be configured together")
+
+        if not self.security_policy:
+            raise ValueError("OPCUA_SECURITY_POLICY must be explicitly configured")
+        if not self.security_mode:
+            raise ValueError("OPCUA_SECURITY_MODE must be explicitly configured")
+
+        insecure = self.security_policy == "None" and self.security_mode == "None"
+        if (self.security_policy == "None") != (self.security_mode == "None"):
+            raise ValueError("secure OPC UA requires both a secure policy and security mode")
+
+        if insecure:
+            endpoint_host = (urlsplit(self.endpoint_url).hostname or "").lower()
+            if not self.allow_insecure_localhost:
+                raise ValueError(
+                    "insecure OPC UA requires OPCUA_ALLOW_INSECURE_LOCALHOST=true"
+                )
+            if endpoint_host not in {"127.0.0.1", "::1", "localhost"}:
+                raise ValueError(
+                    "OPCUA_ALLOW_INSECURE_LOCALHOST permits loopback endpoints only"
+                )
+            if any(
+                value is not None
+                for value in (
+                    self.client_certificate_path,
+                    self.client_private_key_path,
+                    self.client_private_key_password,
+                    self.server_certificate_path,
+                )
+            ):
+                raise ValueError(
+                    "certificate and private-key settings require secure OPC UA"
+                )
+            if self.username is not None:
+                raise ValueError("OPC UA username/password requires SignAndEncrypt")
+            return self
+
+        if self.security_policy == "None":
+            raise ValueError("secure OPC UA requires an explicit secure policy")
+        if self.security_mode != "SignAndEncrypt":
+            raise ValueError("OPC UA security mode must be SignAndEncrypt")
+
+        required_files = (
+            (self.client_certificate_path, "client certificate"),
+            (self.client_private_key_path, "client private key"),
+            (self.server_certificate_path, "trusted server certificate"),
+        )
+        for path, label in required_files:
+            if path is None:
+                raise ValueError(f"secure OPC UA requires a {label}")
+            if not path.is_file():
+                raise ValueError(f"OPC UA {label} path must reference an existing file")
         return self
 
     @classmethod
@@ -142,14 +177,17 @@ class OPCUASettings(BaseModel):
             reconnect_max_seconds=float(os.getenv("OPCUA_RECONNECT_MAX_SECONDS", "30")),
             stale_after_seconds=float(os.getenv("OPCUA_STALE_AFTER_SECONDS", "5")),
             node_map_path=_configured_path("OPCUA_NODE_MAP_PATH", required=True),
-            security_policy=os.getenv("OPCUA_SECURITY_POLICY", "None").strip(),
-            security_mode=os.getenv("OPCUA_SECURITY_MODE", "None").strip(),
+            security_policy=os.getenv("OPCUA_SECURITY_POLICY", "").strip(),
+            security_mode=os.getenv("OPCUA_SECURITY_MODE", "").strip(),
             client_certificate_path=_configured_path("OPCUA_CLIENT_CERTIFICATE_PATH"),
             client_private_key_path=_configured_path("OPCUA_CLIENT_PRIVATE_KEY_PATH"),
             client_private_key_password=SecretStr(key_password) if key_password else None,
             server_certificate_path=_configured_path("OPCUA_SERVER_CERTIFICATE_PATH"),
             username=username,
             password=SecretStr(password) if password is not None else None,
+            allow_insecure_localhost=_environment_bool(
+                "OPCUA_ALLOW_INSECURE_LOCALHOST", False
+            ),
         )
 
 

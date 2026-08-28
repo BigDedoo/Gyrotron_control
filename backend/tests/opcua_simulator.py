@@ -59,11 +59,15 @@ class LocalOPCUASimulator:
         *,
         integer_signal: LogicalSignal | None = None,
         telemetry_values: dict[LogicalSignal, float | int] | None = None,
+        security_certificate_path: Path | None = None,
+        security_private_key_path: Path | None = None,
     ) -> None:
         self.port = port or unused_local_port()
         self.integer_signal = integer_signal
         self.telemetry_values = {**TEST_VALUES, **(telemetry_values or {})}
         self.endpoint_url = f"opc.tcp://127.0.0.1:{self.port}/gyrotron-test/"
+        self.security_certificate_path = security_certificate_path
+        self.security_private_key_path = security_private_key_path
         self.server: Server | None = None
         self.node_ids: dict[LogicalSignal, str] = {}
         self.state_node_ids: dict[LogicalStateSignal, str] = {}
@@ -73,6 +77,14 @@ class LocalOPCUASimulator:
         server = Server()
         await server.init()
         server.set_endpoint(self.endpoint_url)
+        if self.security_certificate_path is not None:
+            if self.security_private_key_path is None:
+                raise ValueError("secure test server requires a private key")
+            await server.load_certificate(self.security_certificate_path)
+            await server.load_private_key(self.security_private_key_path)
+            server.set_security_policy(
+                [ua.SecurityPolicyType.Basic256Sha256_SignAndEncrypt]
+            )
         namespace = await server.register_namespace("urn:gyrotron:test:readonly")
         gyrotron = await server.nodes.objects.add_object(namespace, "TestGyrotron")
         self.node_ids = {}
@@ -203,4 +215,5 @@ def make_opcua_settings(endpoint_url: str, existing_path: Path) -> OPCUASettings
         node_map_path=existing_path,
         security_policy="None",
         security_mode="None",
+        allow_insecure_localhost=True,
     )
