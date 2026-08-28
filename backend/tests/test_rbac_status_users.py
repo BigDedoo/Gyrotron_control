@@ -52,7 +52,7 @@ def test_user_store_errors_propagate(
     assert response.json()["detail"] == "User store operation failed"
 
 
-def test_status_is_explicit_simulation_with_unknown_hardware(
+def test_status_is_explicit_populated_simulation(
     client: TestClient,
     authenticate,
 ):
@@ -64,11 +64,16 @@ def test_status_is_explicit_simulation_with_unknown_hardware(
     assert status["source"] == "simulation"
     assert status["connection_state"] == "simulated"
     assert status["overall_state"] == "simulation"
-    assert status["cps"]["state"] == "unknown"
-    assert status["aps"]["state"] == "unknown"
-    assert all(interlock["state"] == "unknown" for interlock in status["interlocks"])
-    assert status["coverage"]["mapped"] == 0
-    assert status["coverage"]["complete"] is False
+    assert status["coverage"]["mapped"] == status["coverage"]["total"]
+    assert set(status["equipment"]) == {
+        "cmps", "cfps", "ipps", "arc_detector", "ahvps", "chvps", "pulse_generator"
+    }
+    assert status["equipment"]["cmps"]["readings"]["current"]["unit"] == "A"
+    assert status["equipment"]["cfps"]["readings"]["power"]["unit"] == "W"
+    assert status["equipment"]["ahvps"]["readings"]["voltage"]["unit"] == "kV"
+    assert status["equipment"]["chvps"]["readings"]["voltage"]["unit"] == "kV"
+    assert status["equipment"]["pulse_generator"]["readings"]["pulse_length"]["unit"] == "ms"
+    assert status["equipment"]["pulse_generator"]["readings"]["pulse_period"]["unit"] == "s"
 
 
 def test_request_or_frontend_state_cannot_override_authoritative_status(
@@ -78,8 +83,8 @@ def test_request_or_frontend_state_cannot_override_authoritative_status(
     login(client, authenticate, "operator")
     response = client.get("/api/status?cps=on&aps=on&ready=ok")
     assert response.status_code == 200
-    assert response.json()["cps"]["state"] == "unknown"
-    assert response.json()["aps"]["state"] == "unknown"
+    assert response.json()["source"] == "simulation"
+    assert response.json()["equipment"]["cmps"]["readings"]["current"]["value"] is not None
 
 
 def test_telemetry_is_typed_and_explicitly_simulated(client: TestClient, authenticate):

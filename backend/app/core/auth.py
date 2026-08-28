@@ -1,4 +1,5 @@
 import logging
+import math
 
 from ldap3 import ALL, Connection, Server
 
@@ -6,6 +7,11 @@ from app.core.config import get_settings
 
 
 logger = logging.getLogger(__name__)
+
+
+def _ldap_receive_timeout(seconds: float) -> int:
+    """ldap3's Linux SO_RCVTIMEO packing requires whole seconds."""
+    return max(1, math.ceil(seconds))
 
 
 def authenticate_user(username: str, password: str) -> bool:
@@ -31,7 +37,7 @@ def authenticate_user(username: str, password: str) -> bool:
             user=user_dn,
             password=password,
             auto_bind=True,
-            receive_timeout=settings.ldap_timeout_seconds,
+            receive_timeout=_ldap_receive_timeout(settings.ldap_timeout_seconds),
         )
         connection.unbind()
         return True

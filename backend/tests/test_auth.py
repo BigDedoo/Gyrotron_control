@@ -1,8 +1,49 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
+from app.core import auth
 from app.core.config import get_settings
 from app.core.sessions import session_manager
 from app.models import UserRole
+
+
+def test_authentication_uses_integer_receive_timeout_on_linux(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_server(host, **kwargs):
+        captured["host"] = host
+        captured["server_options"] = kwargs
+        return object()
+
+    class FakeConnection:
+        def __init__(self, server, **kwargs):
+            captured["server"] = server
+            captured["connection_options"] = kwargs
+
+        def unbind(self):
+            captured["unbound"] = True
+
+    monkeypatch.setattr(
+        auth,
+        "get_settings",
+        lambda: SimpleNamespace(
+            ldap_server_host="ldap.test",
+            ldap_port=636,
+            ldap_use_ssl=True,
+            ldap_timeout_seconds=5.25,
+            ldap_domain="example.test",
+        ),
+    )
+    monkeypatch.setattr(auth, "Server", fake_server)
+    monkeypatch.setattr(auth, "Connection", FakeConnection)
+
+    assert auth.authenticate_user("operator", "test-password") is True
+    assert captured["server_options"]["connect_timeout"] == 5.25
+    receive_timeout = captured["connection_options"]["receive_timeout"]
+    assert receive_timeout == 6
+    assert isinstance(receive_timeout, int)
+    assert captured["unbound"] is True
 
 
 def test_valid_login_creates_server_session(client: TestClient, authenticate):

@@ -13,6 +13,7 @@ from app.events.store import EventStore
 from app.models import AppMode
 from app.opcua.monitor import OPCUAMonitor
 from app.opcua.node_map import NodeMap, load_node_map
+from app.simulation import seed_simulation_events
 
 
 MonitorFactory = Callable[[OPCUASettings, NodeMap], OPCUAMonitor]
@@ -43,23 +44,25 @@ def create_app(
         monitor: OPCUAMonitor | None = None
         event_observer_task: asyncio.Task[None] | None = None
         event_observer_stop = asyncio.Event()
-        if app_settings.app_mode == AppMode.OPCUA_READONLY:
+        if app_settings.app_mode == AppMode.SIMULATION:
+            seed_simulation_events(event_store)
+        else:
             if app_settings.opcua is None:
                 raise RuntimeError("OPC UA configuration is missing")
             node_map = load_node_map(app_settings.opcua.node_map_path)
             monitor = monitor_factory(app_settings.opcua, node_map)
             application.state.opcua_monitor = monitor
             await monitor.start()
-            detector = EventTransitionDetector(event_store)
-            event_observer_task = asyncio.create_task(
-                observe_monitor_events(
-                    app_settings,
-                    monitor,
-                    detector,
-                    event_observer_stop,
-                ),
-                name="event-transition-observer",
-            )
+        detector = EventTransitionDetector(event_store)
+        event_observer_task = asyncio.create_task(
+            observe_monitor_events(
+                app_settings,
+                monitor,
+                detector,
+                event_observer_stop,
+            ),
+            name="event-transition-observer",
+        )
         try:
             yield
         finally:

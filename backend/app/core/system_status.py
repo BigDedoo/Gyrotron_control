@@ -27,6 +27,7 @@ from app.opcua.node_map import (
     state_signal_kind,
     state_signal_label,
 )
+from app.simulation import simulation_data_state, simulation_equipment, simulation_state_signals
 
 
 def _unknown_signal(
@@ -130,6 +131,9 @@ def _machine_state(
     monitor: OPCUAMonitor | None,
     data_state: DataState,
 ) -> dict[LogicalStateSignal, StateSignalValue]:
+    if source == DataSource.SIMULATION:
+        return simulation_state_signals(data_state)
+
     configured = {}
     node_map = getattr(monitor, "node_map", None)
     if node_map is not None:
@@ -167,10 +171,11 @@ def get_system_status(
     if settings.app_mode.value == "simulation":
         source = DataSource.SIMULATION
         connection_state = ConnectionState.SIMULATED
-        data_state = DataState.LIVE
+        data_state = simulation_data_state()
         last_connection_attempt = None
         last_successful_read = None
         monitor_error = None
+        equipment = simulation_equipment()
     else:
         view = monitor.view() if monitor is not None else None
         source = DataSource.OPCUA
@@ -179,6 +184,7 @@ def get_system_status(
         last_connection_attempt = view.last_connection_attempt if view is not None else None
         last_successful_read = view.last_successful_read if view is not None else None
         monitor_error = view.error if view is not None else "OPC UA monitor is unavailable"
+        equipment = {}
 
     signals = _machine_state(source, monitor, data_state)
     coverage = _coverage(signals)
@@ -256,6 +262,7 @@ def get_system_status(
         aps=aps,
         interlocks=interlocks,
         alarms=alarms,
+        equipment=equipment,
         coverage=coverage,
         timestamp=datetime.now(timezone.utc),
         last_connection_attempt=last_connection_attempt,

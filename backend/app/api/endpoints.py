@@ -1,6 +1,3 @@
-import math
-import time
-from datetime import datetime, timezone
 from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -28,13 +25,10 @@ from app.events.store import EventStore, EventStoreUnavailable
 from app.models import (
     AlarmSeverity,
     AppMode,
-    DataSource,
     DataState,
     LoginRequest,
     MessageResponse,
     SessionUser,
-    SignalQuality,
-    SignalValue,
     SystemStatus,
     TelemetryPoint,
     UserCreateRequest,
@@ -43,10 +37,10 @@ from app.models import (
     UserUpdateRequest,
     UsersResponse,
 )
+from app.simulation import simulation_telemetry
 
 
 router = APIRouter(prefix="/api")
-start_time = time.monotonic()
 
 
 def _event_store(request: Request) -> EventStore | None:
@@ -319,30 +313,7 @@ async def get_telemetry(
             )
         return getattr(view.snapshot, "telemetry", view.snapshot)
 
-    elapsed = time.monotonic() - start_time
-    sequence = int(elapsed)
-    timestamp = datetime.now(timezone.utc)
-
-    def sample(value: float, unit: str) -> SignalValue:
-        return SignalValue(
-            value=value,
-            unit=unit,
-            quality=SignalQuality.GOOD,
-            source_timestamp=timestamp,
-        )
-
-    return TelemetryPoint(
-        timestamp=timestamp,
-        source=DataSource.SIMULATION,
-        sequence=sequence,
-        ionV=sample(4.5 + math.sin((elapsed / 6) * math.pi) * 0.6, "V"),
-        ionI=sample(1.8 + math.cos((elapsed / 8) * math.pi) * 0.4, "A"),
-        heatV=sample(7.0 + math.sin((elapsed / 5) * math.pi) * 0.8, "V"),
-        heatI=sample(3.2 + math.cos((elapsed / 7) * math.pi) * 0.5, "A"),
-        heLvl=sample(68 + math.sin((elapsed / 10) * math.pi) * 6, "%"),
-        Thot=sample(62 + math.sin((elapsed / 9) * math.pi) * 3, "degC"),
-        Tcold=sample(28 + math.cos((elapsed / 9) * math.pi) * 3, "degC"),
-    )
+    return simulation_telemetry()
 
 
 @router.get("/status", response_model=SystemStatus)

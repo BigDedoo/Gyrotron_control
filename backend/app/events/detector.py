@@ -6,6 +6,7 @@ from app.core.system_status import get_system_status
 from app.events.models import EventCategory, EventCreate
 from app.events.store import EventStore
 from app.models import (
+    AlarmSeverity,
     ConnectionState,
     DataState,
     InterpretedState,
@@ -58,7 +59,7 @@ class EventTransitionDetector:
 
     def observe(self, status: SystemStatus) -> None:
         signals = self._signals(status)
-        connected = status.connection_state == ConnectionState.CONNECTED
+        connected = status.connection_state in {ConnectionState.CONNECTED, ConnectionState.SIMULATED}
         if not self._initialized:
             self._initialized = True
             self._was_connected = connected
@@ -75,8 +76,12 @@ class EventTransitionDetector:
                 EventCreate(
                     category=EventCategory.MONITORING,
                     event_type="monitor.baseline",
-                    source="opcua",
-                    message="OPC UA monitoring baseline established",
+                    source=status.source.value,
+                    message=(
+                        "Simulation monitoring baseline established"
+                        if status.source.value == "simulation"
+                        else "OPC UA monitoring baseline established"
+                    ),
                     details={
                         "mapped": status.coverage.mapped,
                         "trustworthy": status.coverage.trustworthy,
@@ -100,7 +105,7 @@ class EventTransitionDetector:
                 EventCreate(
                     category=EventCategory.MONITORING,
                     event_type="monitor.connection_lost",
-                    source="opcua",
+                    source=status.source.value,
                     message="OPC UA connection lost",
                     details={"connection_state": status.connection_state.value},
                 )
@@ -111,7 +116,7 @@ class EventTransitionDetector:
                 EventCreate(
                     category=EventCategory.MONITORING,
                     event_type="monitor.recovered" if recovered else "monitor.connected",
-                    source="opcua",
+                    source=status.source.value,
                     message="OPC UA monitor recovered" if recovered else "OPC UA monitor connected",
                 )
             )
@@ -120,17 +125,21 @@ class EventTransitionDetector:
     def _observe_data_state(self, status: SystemStatus) -> None:
         if status.data_state == self._previous_data_state:
             return
+        source_label = "Simulation" if status.source.value == "simulation" else "OPC UA"
         messages = {
-            DataState.STALE: "OPC UA data became stale",
-            DataState.UNAVAILABLE: "OPC UA data became unavailable",
-            DataState.LIVE: "OPC UA data returned live",
-            DataState.DEGRADED: "OPC UA data became degraded",
+            DataState.STALE: f"{source_label} data became stale",
+            DataState.UNAVAILABLE: f"{source_label} data became unavailable",
+            DataState.LIVE: f"{source_label} data returned live",
+            DataState.DEGRADED: f"{source_label} data became degraded",
         }
         self.store.append(
             EventCreate(
                 category=EventCategory.MONITORING,
                 event_type=f"monitor.data_{status.data_state.value}",
-                source="opcua",
+                source=status.source.value,
+                severity=(
+                    AlarmSeverity.WARNING if status.source.value == "simulation" else None
+                ),
                 message=messages[status.data_state],
                 details={
                     "from": self._previous_data_state.value if self._previous_data_state else None,
@@ -148,7 +157,10 @@ class EventTransitionDetector:
                 EventCreate(
                     category=EventCategory.MONITORING,
                     event_type="monitor.error",
-                    source="opcua",
+                    source=status.source.value,
+                    severity=(
+                        AlarmSeverity.WARNING if status.source.value == "simulation" else None
+                    ),
                     message=status.monitor_error,
                 )
             )
@@ -198,7 +210,7 @@ class EventTransitionDetector:
         return EventCreate(
             category=category,
             event_type=event_type,
-            source="opcua",
+            source=sample.source.value,
             severity=sample.severity,
             target=sample.logical_name,
             source_timestamp=sample.source_timestamp,
@@ -224,7 +236,7 @@ class EventTransitionDetector:
                 EventCreate(
                     category=EventCategory.MACHINE_STATE,
                     event_type="overall_state.changed",
-                    source="opcua",
+                    source=status.source.value,
                     target="overall_state",
                     message=f"Overall state: {previous.value.upper()} -> {current.value.upper()}",
                     details={
@@ -242,7 +254,7 @@ class EventTransitionDetector:
 
 async def observe_monitor_events(
     settings: AppSettings,
-    monitor: OPCUAMonitor,
+    monitor: OPCUAMonitor | None,
     detector: EventTransitionDetector,
     stop_event: asyncio.Event,
 ) -> None:

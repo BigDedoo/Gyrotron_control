@@ -125,6 +125,16 @@ class ComponentStatus(BaseModel):
     signals: dict[str, "StateSignalValue"] = Field(default_factory=dict)
 
 
+class EquipmentStatus(BaseModel):
+    state: InterpretedState
+    quality: SignalQuality
+    feedback: ConditionState | None = None
+    interlock: ConditionState | None = None
+    protection: ConditionState | None = None
+    severity: AlarmSeverity | None = None
+    readings: dict[str, SignalValue] = Field(default_factory=dict)
+
+
 class StateSignalValue(BaseModel):
     logical_name: str
     display_name: str
@@ -196,6 +206,7 @@ class SystemStatus(BaseModel):
     aps: ComponentStatus
     interlocks: list[InterlockStatus]
     alarms: AlarmSummary
+    equipment: dict[str, EquipmentStatus] = Field(default_factory=dict)
     coverage: MappingCoverage
     timestamp: datetime
     last_connection_attempt: datetime | None = None
