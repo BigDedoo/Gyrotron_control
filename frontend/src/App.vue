@@ -18,7 +18,7 @@ const authenticated = computed(() => auth.user !== null)
 const capabilities = ref<CommandCapability[]>([])
 const handleUnauthorized = () => auth.clearSession()
 
-const { data, latest, dataState, error: telemetryError } = useTelemetry(authenticated, handleUnauthorized)
+const { data, error: telemetryError } = useTelemetry(authenticated, handleUnauthorized)
 const { systemStatus, statusState, error: statusError } = useSystemStatus(authenticated, handleUnauthorized)
 const operationalWarning = computed(() => statusError.value || telemetryError.value)
 
@@ -64,9 +64,6 @@ onMounted(() => auth.initializeSession())
         <TabsContent value="control" class="mt-0">
           <OperationsView
             :status="systemStatus"
-            :data="data"
-            :latest="latest"
-            :data-state="dataState"
             :capabilities="capabilities"
             :active="tab === 'control'"
             @diagnostics="tab = 'diagnostics'"

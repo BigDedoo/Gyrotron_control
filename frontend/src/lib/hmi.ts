@@ -4,8 +4,8 @@ export function hmiTone(state: string | null | undefined) {
   const normalized = (state ?? 'unknown').toLowerCase()
   if (['fault', 'active', 'critical', 'error', 'disconnected', 'bad'].includes(normalized)) return 'danger'
   if (['degraded', 'stale', 'uncertain', 'warning', 'connecting', 'simulation'].includes(normalized)) return 'warning'
-  if (['nominal', 'ok', 'on', 'ready', 'connected', 'live', 'good', 'no_active'].includes(normalized)) return 'healthy'
-  if (['opcua_readonly', 'simulated', 'info'].includes(normalized)) return 'info'
+  if (['nominal', 'ok', 'on', 'ready', 'connected', 'live', 'good', 'no_active', 'recovered'].includes(normalized)) return 'healthy'
+  if (['opcua_readonly', 'simulated', 'info', 'changed'].includes(normalized)) return 'info'
   return 'neutral'
 }
 

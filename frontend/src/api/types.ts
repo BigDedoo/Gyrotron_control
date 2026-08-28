@@ -11,6 +11,8 @@ export type InterpretedState = 'on' | 'off' | 'ok' | 'fault' | 'active' | 'inact
 export type AlarmMonitoringState = 'active' | 'no_active' | 'incomplete' | 'unavailable'
 export type AlarmSeverity = 'info' | 'warning' | 'critical'
 export type EventCategory = 'application' | 'monitoring' | 'machine_state' | 'interlock' | 'alarm' | 'security' | 'operator' | 'command'
+export type EventState = 'active' | 'recovered' | 'changed'
+export type EquipmentId = 'system' | 'cmps' | 'cfps' | 'ipps' | 'arc_detector' | 'ahvps' | 'chvps' | 'pulse_generator'
 export type LogicalCommand = 'setpoint.apply' | 'cps.rectifier.set' | 'cps.converter.set' | 'aps.rectifier.set' | 'aps.converter.set' | 'protection.reset' | 'interlock.reset' | 'emergency.shutdown'
 
 export interface SessionUser {
@@ -52,6 +54,7 @@ export interface StateSignalValue {
   source: DataSource
   data_state: DataState
   severity: AlarmSeverity | null
+  equipment: EquipmentId | null
 }
 
 export interface ComponentStatus {
@@ -66,6 +69,7 @@ export interface ComponentStatus {
 export interface EquipmentStatus {
   state: InterpretedState
   quality: SignalQuality
+  data_state: DataState
   feedback: ConditionState | null
   interlock: ConditionState | null
   protection: ConditionState | null
@@ -139,6 +143,8 @@ export interface EventRecord {
   event_type: string
   source: string
   severity: AlarmSeverity | null
+  equipment: EquipmentId | null
+  state: EventState | null
   actor: string | null
   target: string | null
   message: string

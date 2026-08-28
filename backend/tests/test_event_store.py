@@ -1,8 +1,10 @@
+import json
+import sqlite3
 from datetime import datetime, timezone
 
-from app.events.models import EventCategory, EventCreate
+from app.events.models import EventCategory, EventCreate, EventState
 from app.events.store import EventStore
-from app.models import AlarmSeverity
+from app.models import AlarmSeverity, EquipmentId
 
 
 def test_event_store_initializes_appends_and_survives_recreation(tmp_path):
@@ -15,6 +17,8 @@ def test_event_store_initializes_appends_and_survives_recreation(tmp_path):
             category=EventCategory.APPLICATION,
             event_type="application.test",
             source="test",
+            equipment=EquipmentId.CMPS,
+            state=EventState.ACTIVE,
             message="Persistent event",
             details={"sequence": 1},
         )
@@ -26,6 +30,8 @@ def test_event_store_initializes_appends_and_survives_recreation(tmp_path):
     assert [event.id for event in events] == [created.id]
     assert events[0].message == "Persistent event"
     assert events[0].details == {"sequence": 1}
+    assert events[0].equipment == EquipmentId.CMPS
+    assert events[0].state == EventState.ACTIVE
 
 
 def test_event_query_is_deterministic_bounded_paginated_and_filtered(tmp_path):
@@ -78,3 +84,47 @@ def test_event_store_failure_is_nonfatal_to_callers(tmp_path):
             message="Cannot persist",
         )
     ) is None
+
+
+def test_event_store_migrates_existing_history_without_resetting_it(tmp_path):
+    path = tmp_path / "events.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at TEXT NOT NULL,
+                source_timestamp TEXT,
+                category TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                severity TEXT,
+                actor TEXT,
+                target TEXT,
+                message TEXT NOT NULL,
+                details_json TEXT NOT NULL,
+                correlation_id TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO events (
+                recorded_at, category, event_type, source, message, details_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat(),
+                EventCategory.APPLICATION.value,
+                "legacy.event",
+                "legacy",
+                "Existing event",
+                json.dumps({"legacy": True}),
+            ),
+        )
+
+    store = EventStore(path)
+    existing = store.query(limit=10)[0]
+    assert existing.message == "Existing event"
+    assert existing.equipment is None
+    assert existing.state is None

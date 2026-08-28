@@ -11,6 +11,7 @@ from app.models import (
     ConnectionState,
     DataSource,
     DataState,
+    EquipmentId,
     InterlockStatus,
     InterpretedState,
     MappingCoverage,
@@ -27,7 +28,15 @@ from app.opcua.node_map import (
     state_signal_kind,
     state_signal_label,
 )
-from app.simulation import simulation_data_state, simulation_equipment, simulation_state_signals
+from app.simulation import simulation_snapshot
+
+
+_EQUIPMENT_BY_STATE_SIGNAL = {
+    LogicalStateSignal.CMPS: EquipmentId.CMPS,
+    LogicalStateSignal.IPPS: EquipmentId.IPPS,
+    LogicalStateSignal.ARC_DETECTOR: EquipmentId.ARC_DETECTOR,
+    LogicalStateSignal.OVERVOLTAGE: EquipmentId.AHVPS,
+}
 
 
 def _unknown_signal(
@@ -52,6 +61,7 @@ def _unknown_signal(
         source=source,
         data_state=DataState.UNAVAILABLE,
         severity=severity,
+        equipment=_EQUIPMENT_BY_STATE_SIGNAL.get(signal),
     )
 
 
@@ -131,9 +141,6 @@ def _machine_state(
     monitor: OPCUAMonitor | None,
     data_state: DataState,
 ) -> dict[LogicalStateSignal, StateSignalValue]:
-    if source == DataSource.SIMULATION:
-        return simulation_state_signals(data_state)
-
     configured = {}
     node_map = getattr(monitor, "node_map", None)
     if node_map is not None:
@@ -159,7 +166,11 @@ def _machine_state(
                 group=mapping.display_group if mapping is not None else None,
                 severity=mapping.alarm_severity if mapping is not None else None,
             )
-        result[signal] = _effective_signal(sample, data_state)
+        sample = _effective_signal(sample, data_state)
+        equipment = _EQUIPMENT_BY_STATE_SIGNAL.get(signal)
+        if sample.equipment is None and equipment is not None:
+            sample = sample.model_copy(update={"equipment": equipment})
+        result[signal] = sample
     return result
 
 
@@ -169,13 +180,18 @@ def get_system_status(
 ) -> SystemStatus:
     settings = settings or get_settings()
     if settings.app_mode.value == "simulation":
+        snapshot = simulation_snapshot(
+            problem_cycle_seconds=settings.simulation_problem_cycle_seconds
+        )
         source = DataSource.SIMULATION
         connection_state = ConnectionState.SIMULATED
-        data_state = simulation_data_state()
+        data_state = snapshot.data_state
         last_connection_attempt = None
         last_successful_read = None
         monitor_error = None
-        equipment = simulation_equipment()
+        equipment = snapshot.equipment
+        signals = snapshot.state_signals
+        status_timestamp = snapshot.timestamp
     else:
         view = monitor.view() if monitor is not None else None
         source = DataSource.OPCUA
@@ -185,8 +201,9 @@ def get_system_status(
         last_successful_read = view.last_successful_read if view is not None else None
         monitor_error = view.error if view is not None else "OPC UA monitor is unavailable"
         equipment = {}
+        signals = _machine_state(source, monitor, data_state)
+        status_timestamp = datetime.now(timezone.utc)
 
-    signals = _machine_state(source, monitor, data_state)
     coverage = _coverage(signals)
     cps = _component("cps", signals)
     aps = _component("aps", signals)
@@ -264,7 +281,7 @@ def get_system_status(
         alarms=alarms,
         equipment=equipment,
         coverage=coverage,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=status_timestamp,
         last_connection_attempt=last_connection_attempt,
         last_successful_read=last_successful_read,
         monitor_error=monitor_error,

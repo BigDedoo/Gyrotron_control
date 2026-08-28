@@ -91,6 +91,17 @@ class AlarmSeverity(str, Enum):
     CRITICAL = "critical"
 
 
+class EquipmentId(str, Enum):
+    SYSTEM = "system"
+    CMPS = "cmps"
+    CFPS = "cfps"
+    IPPS = "ipps"
+    ARC_DETECTOR = "arc_detector"
+    AHVPS = "ahvps"
+    CHVPS = "chvps"
+    PULSE_GENERATOR = "pulse_generator"
+
+
 class UserRole(str, Enum):
     USER = "user"
     ADMIN = "admin"
@@ -128,6 +139,7 @@ class ComponentStatus(BaseModel):
 class EquipmentStatus(BaseModel):
     state: InterpretedState
     quality: SignalQuality
+    data_state: DataState
     feedback: ConditionState | None = None
     interlock: ConditionState | None = None
     protection: ConditionState | None = None
@@ -148,6 +160,7 @@ class StateSignalValue(BaseModel):
     source: DataSource
     data_state: DataState
     severity: AlarmSeverity | None = None
+    equipment: EquipmentId | None = None
 
 
 class InterlockStatus(BaseModel):

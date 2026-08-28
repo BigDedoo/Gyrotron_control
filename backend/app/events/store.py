@@ -5,8 +5,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.events.models import EventCategory, EventCreate, EventRecord
-from app.models import AlarmSeverity
+from app.events.models import EventCategory, EventCreate, EventRecord, EventState
+from app.models import AlarmSeverity, EquipmentId
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,8 @@ class EventStore:
                         event_type TEXT NOT NULL,
                         source TEXT NOT NULL,
                         severity TEXT,
+                        equipment TEXT,
+                        state TEXT,
                         actor TEXT,
                         target TEXT,
                         message TEXT NOT NULL,
@@ -60,6 +62,14 @@ class EventStore:
                     )
                     """
                 )
+                columns = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(events)").fetchall()
+                }
+                if "equipment" not in columns:
+                    connection.execute("ALTER TABLE events ADD COLUMN equipment TEXT")
+                if "state" not in columns:
+                    connection.execute("ALTER TABLE events ADD COLUMN state TEXT")
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS idx_events_category_id ON events(category, id DESC)"
                 )
@@ -91,8 +101,9 @@ class EventStore:
                     """
                     INSERT INTO events (
                         recorded_at, source_timestamp, category, event_type, source,
-                        severity, actor, target, message, details_json, correlation_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        severity, equipment, state, actor, target, message, details_json,
+                        correlation_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         recorded_at.isoformat(),
@@ -101,6 +112,8 @@ class EventStore:
                         event.event_type,
                         event.source,
                         event.severity.value if event.severity else None,
+                        event.equipment.value if event.equipment else None,
+                        event.state.value if event.state else None,
                         event.actor,
                         event.target,
                         event.message,
@@ -117,6 +130,8 @@ class EventStore:
                 event_type=event.event_type,
                 source=event.source,
                 severity=event.severity,
+                equipment=event.equipment,
+                state=event.state,
                 actor=event.actor,
                 target=event.target,
                 message=event.message,
@@ -191,6 +206,8 @@ class EventStore:
             event_type=row["event_type"],
             source=row["source"],
             severity=AlarmSeverity(row["severity"]) if row["severity"] else None,
+            equipment=EquipmentId(row["equipment"]) if row["equipment"] else None,
+            state=EventState(row["state"]) if row["state"] else None,
             actor=row["actor"],
             target=row["target"],
             message=row["message"],

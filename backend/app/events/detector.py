@@ -3,12 +3,13 @@ import logging
 
 from app.core.config import AppSettings
 from app.core.system_status import get_system_status
-from app.events.models import EventCategory, EventCreate
+from app.events.models import EventCategory, EventCreate, EventState
 from app.events.store import EventStore
 from app.models import (
     AlarmSeverity,
     ConnectionState,
     DataState,
+    EquipmentId,
     InterpretedState,
     OverallState,
     SignalQuality,
@@ -77,6 +78,7 @@ class EventTransitionDetector:
                     category=EventCategory.MONITORING,
                     event_type="monitor.baseline",
                     source=status.source.value,
+                    equipment=EquipmentId.SYSTEM,
                     message=(
                         "Simulation monitoring baseline established"
                         if status.source.value == "simulation"
@@ -106,6 +108,9 @@ class EventTransitionDetector:
                     category=EventCategory.MONITORING,
                     event_type="monitor.connection_lost",
                     source=status.source.value,
+                    severity=AlarmSeverity.WARNING,
+                    equipment=EquipmentId.SYSTEM,
+                    state=EventState.ACTIVE,
                     message="OPC UA connection lost",
                     details={"connection_state": status.connection_state.value},
                 )
@@ -117,6 +122,9 @@ class EventTransitionDetector:
                     category=EventCategory.MONITORING,
                     event_type="monitor.recovered" if recovered else "monitor.connected",
                     source=status.source.value,
+                    severity=AlarmSeverity.WARNING if recovered else None,
+                    equipment=EquipmentId.SYSTEM,
+                    state=EventState.RECOVERED if recovered else EventState.CHANGED,
                     message="OPC UA monitor recovered" if recovered else "OPC UA monitor connected",
                 )
             )
@@ -137,8 +145,12 @@ class EventTransitionDetector:
                 category=EventCategory.MONITORING,
                 event_type=f"monitor.data_{status.data_state.value}",
                 source=status.source.value,
-                severity=(
-                    AlarmSeverity.WARNING if status.source.value == "simulation" else None
+                severity=AlarmSeverity.WARNING,
+                equipment=EquipmentId.SYSTEM,
+                state=(
+                    EventState.RECOVERED
+                    if status.data_state == DataState.LIVE
+                    else EventState.ACTIVE
                 ),
                 message=messages[status.data_state],
                 details={
@@ -158,9 +170,9 @@ class EventTransitionDetector:
                     category=EventCategory.MONITORING,
                     event_type="monitor.error",
                     source=status.source.value,
-                    severity=(
-                        AlarmSeverity.WARNING if status.source.value == "simulation" else None
-                    ),
+                    severity=AlarmSeverity.WARNING,
+                    equipment=EquipmentId.SYSTEM,
+                    state=EventState.ACTIVE,
                     message=status.monitor_error,
                 )
             )
@@ -200,18 +212,44 @@ class EventTransitionDetector:
                 if current == InterpretedState.INACTIVE
                 else "alarm.changed"
             )
+            state = (
+                EventState.ACTIVE
+                if current == InterpretedState.ACTIVE
+                else EventState.RECOVERED
+                if current == InterpretedState.INACTIVE
+                else EventState.CHANGED
+            )
+            severity = sample.severity
         elif sample.logical_name.startswith("interlock."):
             category = EventCategory.INTERLOCK
             event_type = "interlock.changed"
+            state = (
+                EventState.ACTIVE
+                if current == InterpretedState.FAULT
+                else EventState.RECOVERED
+                if current == InterpretedState.OK
+                else EventState.CHANGED
+            )
+            severity = sample.severity or AlarmSeverity.WARNING
         else:
             category = EventCategory.MACHINE_STATE
             event_type = "machine_state.changed"
+            state = (
+                EventState.ACTIVE
+                if current == InterpretedState.FAULT
+                else EventState.RECOVERED
+                if previous == InterpretedState.FAULT
+                else EventState.CHANGED
+            )
+            severity = sample.severity
         qualifier = " observed after communication gap" if after_gap else ""
         return EventCreate(
             category=category,
             event_type=event_type,
             source=sample.source.value,
-            severity=sample.severity,
+            severity=severity,
+            equipment=sample.equipment,
+            state=state,
             target=sample.logical_name,
             source_timestamp=sample.source_timestamp,
             message=(
@@ -237,6 +275,14 @@ class EventTransitionDetector:
                     category=EventCategory.MACHINE_STATE,
                     event_type="overall_state.changed",
                     source=status.source.value,
+                    equipment=EquipmentId.SYSTEM,
+                    state=(
+                        EventState.ACTIVE
+                        if current == OverallState.FAULT
+                        else EventState.RECOVERED
+                        if previous == OverallState.FAULT
+                        else EventState.CHANGED
+                    ),
                     target="overall_state",
                     message=f"Overall state: {previous.value.upper()} -> {current.value.upper()}",
                     details={

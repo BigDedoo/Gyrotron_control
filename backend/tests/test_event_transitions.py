@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.events.detector import EventTransitionDetector
-from app.events.models import EventCategory
+from app.events.models import EventCategory, EventState
 from app.events.store import EventStore
 from app.models import (
     AlarmMonitoringState,
@@ -14,6 +14,7 @@ from app.models import (
     ConnectionState,
     DataSource,
     DataState,
+    EquipmentId,
     InterlockStatus,
     InterpretedState,
     MappingCoverage,
@@ -42,6 +43,7 @@ def _signal(
     *,
     data_state: DataState = DataState.LIVE,
     severity: AlarmSeverity | None = None,
+    equipment: EquipmentId | None = None,
 ) -> StateSignalValue:
     return StateSignalValue(
         logical_name=name,
@@ -56,6 +58,7 @@ def _signal(
         source=DataSource.OPCUA,
         data_state=data_state,
         severity=severity,
+        equipment=equipment,
     )
 
 
@@ -69,7 +72,11 @@ def _status(
 ) -> SystemStatus:
     signal_state = DataState.LIVE if data_state in {DataState.LIVE, DataState.DEGRADED} else data_state
     interlock_signal = _signal(
-        "interlock.gs_doors", "GS Doors", interlock, data_state=signal_state
+        "interlock.cmps",
+        "CMPS",
+        interlock,
+        data_state=signal_state,
+        equipment=EquipmentId.CMPS,
     )
     alarm_signal = _signal(
         "alarm.arc_detector",
@@ -77,6 +84,7 @@ def _status(
         alarm,
         data_state=signal_state,
         severity=AlarmSeverity.CRITICAL,
+        equipment=EquipmentId.ARC_DETECTOR,
     )
     return SystemStatus(
         mode=AppMode.OPCUA_READONLY,
@@ -140,6 +148,17 @@ def test_interlock_alarm_and_overall_transitions_are_recorded_once(tmp_path):
     ]
     assert [event.event_type for event in alarms] == ["alarm.activated", "alarm.cleared"]
     assert all(event.severity == AlarmSeverity.CRITICAL for event in alarms)
+    assert [event.state for event in interlocks] == [
+        EventState.ACTIVE,
+        EventState.RECOVERED,
+    ]
+    assert all(event.severity == AlarmSeverity.WARNING for event in interlocks)
+    assert all(event.equipment == EquipmentId.CMPS for event in interlocks)
+    assert [event.state for event in alarms] == [
+        EventState.ACTIVE,
+        EventState.RECOVERED,
+    ]
+    assert all(event.equipment == EquipmentId.ARC_DETECTOR for event in alarms)
     assert any(event.event_type == "overall_state.changed" for event in events)
 
 
@@ -187,3 +206,28 @@ def test_recovery_records_observed_after_gap_without_claiming_change_time(tmp_pa
     assert changed.details["observed_after_gap"] is True
     assert changed.details["change_time_known"] is False
     assert "after communication gap" in changed.message
+
+
+def test_data_state_problem_severity_is_source_independent_and_recovery_is_explicit(
+    tmp_path,
+):
+    store = EventStore(tmp_path / "events.sqlite3")
+    detector = EventTransitionDetector(store)
+    detector.observe(_status())
+    detector.observe(_status(data_state=DataState.DEGRADED))
+    detector.observe(_status(data_state=DataState.LIVE))
+
+    events = [
+        event
+        for event in _events(store)
+        if event.event_type.startswith("monitor.data_")
+    ]
+    assert [event.severity for event in events] == [
+        AlarmSeverity.WARNING,
+        AlarmSeverity.WARNING,
+    ]
+    assert [event.state for event in events] == [
+        EventState.ACTIVE,
+        EventState.RECOVERED,
+    ]
+    assert all(event.equipment == EquipmentId.SYSTEM for event in events)

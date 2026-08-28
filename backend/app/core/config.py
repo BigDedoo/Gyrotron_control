@@ -164,6 +164,7 @@ class AppSettings(BaseModel):
     session_cookie_name: str = Field(min_length=1, max_length=64)
     session_ttl_seconds: int = Field(ge=300, le=86400)
     session_cookie_secure: bool
+    simulation_problem_cycle_seconds: float = Field(default=900.0, ge=30.0, le=86400.0)
     event_db_path: Path = (BACKEND_ROOT / "data" / "events.sqlite3").resolve()
     opcua: OPCUASettings | None = None
 
@@ -196,6 +197,9 @@ class AppSettings(BaseModel):
             session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "gyro_session").strip(),
             session_ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "28800")),
             session_cookie_secure=_environment_bool("SESSION_COOKIE_SECURE", False),
+            simulation_problem_cycle_seconds=float(
+                os.getenv("SIMULATION_PROBLEM_CYCLE_SECONDS", "900")
+            ),
             event_db_path=(
                 _configured_path("EVENT_DB_PATH")
                 or (BACKEND_ROOT / "data" / "events.sqlite3").resolve()

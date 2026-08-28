@@ -10,6 +10,7 @@ from app.models import (
     ComponentState,
     ConditionState,
     DataState,
+    EquipmentId,
     OverallState,
     SignalQuality,
 )
@@ -64,6 +65,16 @@ def test_authoritative_components_interlocks_alarms_and_fault_transition():
             assert status.alarms.active == []
             assert status.coverage.complete
             assert status.overall_state == OverallState.NOMINAL
+            cmps = next(
+                item for item in status.interlocks if item.logical_name == "interlock.cmps"
+            )
+            overvoltage = next(
+                item
+                for item in status.alarms.signals
+                if item.logical_name == "alarm.overvoltage"
+            )
+            assert cmps.signal.equipment == EquipmentId.CMPS
+            assert overvoltage.equipment == EquipmentId.AHVPS
 
             first_sequence = monitor.view().snapshot.sequence
             await simulator.publish_state_for_test(LogicalStateSignal.POOR_VACUUM, True)

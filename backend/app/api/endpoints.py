@@ -313,7 +313,9 @@ async def get_telemetry(
             )
         return getattr(view.snapshot, "telemetry", view.snapshot)
 
-    return simulation_telemetry()
+    return simulation_telemetry(
+        problem_cycle_seconds=settings.simulation_problem_cycle_seconds
+    )
 
 
 @router.get("/status", response_model=SystemStatus)

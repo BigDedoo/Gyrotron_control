@@ -41,7 +41,7 @@ export function useSystemStatus(enabled: Ref<boolean>, onUnauthorized: () => voi
         if (!sourceMatches || Number.isNaN(Date.parse(next.timestamp))) throw new Error('Malformed status')
         if (!active) return
         systemStatus.value = next
-        statusState.value = 'live'
+        statusState.value = next.data_state
         error.value = next.monitor_error
         if (staleTimer) clearTimeout(staleTimer)
         staleTimer = setTimeout(() => {
@@ -56,7 +56,9 @@ export function useSystemStatus(enabled: Ref<boolean>, onUnauthorized: () => voi
           onUnauthorized()
           return
         }
-        statusState.value = systemStatus.value ? 'stale' : 'unavailable'
+        if (staleTimer) clearTimeout(staleTimer)
+        staleTimer = undefined
+        statusState.value = 'unavailable'
         error.value = timedOut ? 'System status request timed out.' : 'System status is unavailable.'
       } finally {
         clearTimeout(timeout)
