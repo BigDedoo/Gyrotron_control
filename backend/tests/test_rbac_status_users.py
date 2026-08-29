@@ -65,15 +65,14 @@ def test_status_is_explicit_populated_simulation(
     assert status["connection_state"] == "simulated"
     assert status["overall_state"] == "simulation"
     assert status["coverage"]["mapped"] == status["coverage"]["total"]
-    assert set(status["equipment"]) == {
-        "cmps", "cfps", "ipps", "arc_detector", "ahvps", "chvps", "pulse_generator"
-    }
-    assert status["equipment"]["cmps"]["readings"]["current"]["unit"] == "A"
-    assert status["equipment"]["cfps"]["readings"]["power"]["unit"] == "W"
-    assert status["equipment"]["ahvps"]["readings"]["voltage"]["unit"] == "kV"
-    assert status["equipment"]["chvps"]["readings"]["voltage"]["unit"] == "kV"
-    assert status["equipment"]["pulse_generator"]["readings"]["pulse_length"]["unit"] == "ms"
-    assert status["equipment"]["pulse_generator"]["readings"]["pulse_period"]["unit"] == "s"
+    equipment = status["equipment"]
+    assert {"cmps", "cfps", "ipps", "arc_detector", "hvps", "pulse_generator"}.issubset(equipment)
+    assert equipment["cmps"]["current"]["unit"] == "A"
+    assert equipment["cfps"]["power"]["unit"] == "W"
+    assert equipment["hvps"]["ahvps"]["voltage"]["unit"] == "kV"
+    assert equipment["hvps"]["chvps"]["voltage"]["unit"] == "kV"
+    assert equipment["pulse_generator"]["pulse_length"]["unit"] == "ms"
+    assert equipment["pulse_generator"]["pulse_period"]["unit"] == "s"
 
 
 def test_request_or_frontend_state_cannot_override_authoritative_status(
@@ -84,7 +83,7 @@ def test_request_or_frontend_state_cannot_override_authoritative_status(
     response = client.get("/api/status?cps=on&aps=on&ready=ok")
     assert response.status_code == 200
     assert response.json()["source"] == "simulation"
-    assert response.json()["equipment"]["cmps"]["readings"]["current"]["value"] is not None
+    assert response.json()["equipment"]["cmps"]["current"]["value"] is not None
 
 
 def test_telemetry_is_typed_and_explicitly_simulated(client: TestClient, authenticate):

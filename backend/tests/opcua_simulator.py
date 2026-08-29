@@ -23,6 +23,14 @@ TEST_VALUES = {
     LogicalSignal.HE_LEVEL: 68.0,
     LogicalSignal.T_HOT: 62.0,
     LogicalSignal.T_COLD: 28.0,
+    LogicalSignal.CMPS_CURRENT: 8.4,
+    LogicalSignal.CFPS_POWER: 350.0,
+    LogicalSignal.IPPS_VOLTAGE: 4.5,
+    LogicalSignal.IPPS_CURRENT: 1.8,
+    LogicalSignal.AHVPS_VOLTAGE: 42.0,
+    LogicalSignal.CHVPS_VOLTAGE: 18.0,
+    LogicalSignal.PULSE_LENGTH: 2.5,
+    LogicalSignal.PULSE_PERIOD: 1.0,
 }
 
 TEST_UNITS = {
@@ -33,6 +41,14 @@ TEST_UNITS = {
     LogicalSignal.HE_LEVEL: "%",
     LogicalSignal.T_HOT: "degC",
     LogicalSignal.T_COLD: "degC",
+    LogicalSignal.CMPS_CURRENT: "A",
+    LogicalSignal.CFPS_POWER: "W",
+    LogicalSignal.IPPS_VOLTAGE: "V",
+    LogicalSignal.IPPS_CURRENT: "A",
+    LogicalSignal.AHVPS_VOLTAGE: "kV",
+    LogicalSignal.CHVPS_VOLTAGE: "kV",
+    LogicalSignal.PULSE_LENGTH: "ms",
+    LogicalSignal.PULSE_PERIOD: "s",
 }
 
 TEST_STATE_VALUES = {
@@ -133,12 +149,16 @@ class LocalOPCUASimulator:
         missing: LogicalSignal | None = None,
         unavailable: LogicalSignal | None = None,
         integer_type: LogicalSignal | None = None,
+        telemetry_signals: set[LogicalSignal] | None = None,
         state_signals: set[LogicalStateSignal] | None = None,
         state_missing: LogicalStateSignal | None = None,
         state_unavailable: LogicalStateSignal | None = None,
     ) -> NodeMap:
         mappings = []
+        selected_telemetry = set(self.node_ids) if telemetry_signals is None else telemetry_signals
         for signal in LogicalSignal:
+            if signal not in selected_telemetry:
+                continue
             node_id = self.node_ids[signal]
             if signal == missing:
                 node_id = node_id + ".Missing"

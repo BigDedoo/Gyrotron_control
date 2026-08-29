@@ -112,6 +112,8 @@ class SignalValue(BaseModel):
     unit: str = Field(min_length=1, max_length=32)
     quality: SignalQuality
     source_timestamp: datetime | None
+    observed_at: datetime | None = None
+    mapped: bool = True
 
 
 class TelemetryPoint(BaseModel):
@@ -136,15 +138,48 @@ class ComponentStatus(BaseModel):
     signals: dict[str, "StateSignalValue"] = Field(default_factory=dict)
 
 
-class EquipmentStatus(BaseModel):
-    state: InterpretedState
+class EquipmentStatusBase(BaseModel):
+    state: "StateSignalValue"
     quality: SignalQuality
     data_state: DataState
-    feedback: ConditionState | None = None
-    interlock: ConditionState | None = None
-    protection: ConditionState | None = None
+
+
+class CMPSEquipmentStatus(EquipmentStatusBase):
+    current: SignalValue
+    interlock: "StateSignalValue"
+
+
+class CFPSEquipmentStatus(EquipmentStatusBase):
+    power: SignalValue
+    feedback: "StateSignalValue"
+    interlock: "StateSignalValue"
+
+
+class IPPSEquipmentStatus(EquipmentStatusBase):
+    voltage: SignalValue
+    current: SignalValue
+    interlock: "StateSignalValue"
+
+
+class ArcDetectorEquipmentStatus(EquipmentStatusBase):
     severity: AlarmSeverity | None = None
-    readings: dict[str, SignalValue] = Field(default_factory=dict)
+
+
+class HVPSSupplyEquipmentStatus(EquipmentStatusBase):
+    voltage: SignalValue
+    protection: "StateSignalValue"
+    interlock: "StateSignalValue"
+
+
+class HVPSEquipmentStatus(BaseModel):
+    ahvps: HVPSSupplyEquipmentStatus
+    chvps: HVPSSupplyEquipmentStatus
+
+
+class PulseGeneratorEquipmentStatus(EquipmentStatusBase):
+    pulse_length: SignalValue
+    pulse_period: SignalValue
+    feedback: "StateSignalValue"
 
 
 class StateSignalValue(BaseModel):
@@ -192,6 +227,21 @@ class MappingCoverage(BaseModel):
     trustworthy: int = Field(ge=0)
     complete: bool
     missing: list[str]
+    unavailable: list[str] = Field(default_factory=list)
+
+
+class EquipmentSnapshot(BaseModel):
+    timestamp: datetime
+    source: DataSource
+    sequence: int = Field(ge=0)
+    data_state: DataState
+    cmps: CMPSEquipmentStatus
+    cfps: CFPSEquipmentStatus
+    ipps: IPPSEquipmentStatus
+    arc_detector: ArcDetectorEquipmentStatus
+    hvps: HVPSEquipmentStatus
+    pulse_generator: PulseGeneratorEquipmentStatus
+    coverage: MappingCoverage
 
 
 class MachineStatePoint(BaseModel):
@@ -207,6 +257,7 @@ class OPCUASnapshot(BaseModel):
     sequence: int = Field(ge=0)
     telemetry: TelemetryPoint
     machine_state: MachineStatePoint
+    equipment: EquipmentSnapshot
 
 
 class SystemStatus(BaseModel):
@@ -219,7 +270,7 @@ class SystemStatus(BaseModel):
     aps: ComponentStatus
     interlocks: list[InterlockStatus]
     alarms: AlarmSummary
-    equipment: dict[str, EquipmentStatus] = Field(default_factory=dict)
+    equipment: EquipmentSnapshot
     coverage: MappingCoverage
     timestamp: datetime
     last_connection_attempt: datetime | None = None

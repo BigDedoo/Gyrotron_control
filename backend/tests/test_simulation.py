@@ -20,6 +20,33 @@ from app.simulation import (
 )
 
 
+def _equipment_items(snapshot):
+    equipment = snapshot.equipment
+    return (
+        equipment.cmps,
+        equipment.cfps,
+        equipment.ipps,
+        equipment.arc_detector,
+        equipment.hvps.ahvps,
+        equipment.hvps.chvps,
+        equipment.pulse_generator,
+    )
+
+
+def _equipment_readings(snapshot):
+    equipment = snapshot.equipment
+    return (
+        equipment.cmps.current,
+        equipment.cfps.power,
+        equipment.ipps.voltage,
+        equipment.ipps.current,
+        equipment.hvps.ahvps.voltage,
+        equipment.hvps.chvps.voltage,
+        equipment.pulse_generator.pulse_length,
+        equipment.pulse_generator.pulse_period,
+    )
+
+
 def test_simulation_problem_seed_is_idempotent_and_explicit(tmp_path):
     store = EventStore(tmp_path / "events.sqlite3")
 
@@ -60,18 +87,18 @@ def test_degraded_simulation_quality_propagates_without_inventing_faults():
 
     assert snapshot.data_state == DataState.DEGRADED
     assert all(
-        item.data_state == DataState.DEGRADED for item in snapshot.equipment.values()
+        item.data_state == DataState.DEGRADED for item in _equipment_items(snapshot)
     )
     assert all(
-        item.quality == SignalQuality.UNCERTAIN for item in snapshot.equipment.values()
+        item.quality == SignalQuality.UNCERTAIN for item in _equipment_items(snapshot)
     )
     assert all(
-        item.state != InterpretedState.FAULT for item in snapshot.equipment.values()
+        item.state.interpreted_state != InterpretedState.FAULT
+        for item in _equipment_items(snapshot)
     )
     assert all(
         reading.quality == SignalQuality.UNCERTAIN
-        for item in snapshot.equipment.values()
-        for reading in item.readings.values()
+        for reading in _equipment_readings(snapshot)
     )
 
 
@@ -80,28 +107,27 @@ def test_stale_and_unavailable_equipment_are_not_presented_as_current():
     unavailable = simulation_snapshot(elapsed=10.0, data_state=DataState.UNAVAILABLE)
 
     assert all(
-        item.state == InterpretedState.UNKNOWN for item in stale.equipment.values()
+        item.state.interpreted_state == InterpretedState.UNKNOWN
+        for item in _equipment_items(stale)
     )
     assert all(
-        item.quality == SignalQuality.UNCERTAIN for item in stale.equipment.values()
+        item.quality == SignalQuality.UNCERTAIN for item in _equipment_items(stale)
     )
     assert all(
         reading.value is not None and reading.quality == SignalQuality.UNCERTAIN
-        for item in stale.equipment.values()
-        for reading in item.readings.values()
+        for reading in _equipment_readings(stale)
     )
     assert all(
-        item.state == InterpretedState.UNKNOWN
-        for item in unavailable.equipment.values()
+        item.state.interpreted_state == InterpretedState.UNKNOWN
+        for item in _equipment_items(unavailable)
     )
     assert all(
         item.quality == SignalQuality.UNAVAILABLE
-        for item in unavailable.equipment.values()
+        for item in _equipment_items(unavailable)
     )
     assert all(
         reading.value is None and reading.source_timestamp is None
-        for item in unavailable.equipment.values()
-        for reading in item.readings.values()
+        for reading in _equipment_readings(unavailable)
     )
 
 
@@ -111,8 +137,8 @@ def test_simulation_snapshot_uses_one_timestamp_and_ipps_readings():
 
     assert snapshot.timestamp == timestamp
     assert snapshot.telemetry.timestamp == timestamp
-    assert snapshot.equipment["ipps"].readings["voltage"] == snapshot.telemetry.ionV
-    assert snapshot.equipment["ipps"].readings["current"] == snapshot.telemetry.ionI
+    assert snapshot.equipment.ipps.voltage == snapshot.telemetry.ionV
+    assert snapshot.equipment.ipps.current == snapshot.telemetry.ionI
     assert all(
         signal.observed_at == timestamp for signal in snapshot.state_signals.values()
     )
@@ -124,9 +150,9 @@ def test_problem_cycle_default_is_fifteen_minutes_and_can_be_overridden():
     default = simulation_snapshot(elapsed=40.0)
     normalized_default = simulation_snapshot(elapsed=200.0)
 
-    assert fast.equipment["cmps"].state == InterpretedState.FAULT
-    assert default.equipment["cmps"].state == InterpretedState.ON
-    assert normalized_default.equipment["cmps"].state == InterpretedState.FAULT
+    assert fast.equipment.cmps.state.interpreted_state == InterpretedState.FAULT
+    assert default.equipment.cmps.state.interpreted_state == InterpretedState.ON
+    assert normalized_default.equipment.cmps.state.interpreted_state == InterpretedState.FAULT
 
 
 def test_problem_cycle_environment_setting_defaults_and_overrides(monkeypatch):

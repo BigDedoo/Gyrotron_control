@@ -207,12 +207,14 @@ class ReadOnlyOPCUAClient:
         client = self._client
         if not self.connected or client is None:
             raise OPCUAReadError("OPC UA client is not connected")
+        observed_at = datetime.now(timezone.utc)
         try:
             node = client.get_node(mapping.node_id)
             data_value = await asyncio.wait_for(
                 node.read_data_value(raise_on_bad_status=False),
                 timeout=self.settings.read_timeout_seconds,
             )
+            observed_at = datetime.now(timezone.utc)
         except Exception as exc:
             raise OPCUAReadError("OPC UA signal read failed") from exc
 
@@ -224,6 +226,7 @@ class ReadOnlyOPCUAClient:
                 unit=mapping.unit,
                 quality=quality,
                 source_timestamp=timestamp,
+                observed_at=observed_at,
             )
 
         raw = data_value.Value.Value if data_value.Value is not None else None
@@ -235,12 +238,14 @@ class ReadOnlyOPCUAClient:
                 unit=mapping.unit,
                 quality=SignalQuality.BAD,
                 source_timestamp=timestamp,
+                observed_at=observed_at,
             )
         return SignalValue(
             value=value,
             unit=mapping.unit,
             quality=quality,
             source_timestamp=timestamp,
+            observed_at=observed_at,
         )
 
     async def read_signals(
@@ -263,6 +268,7 @@ class ReadOnlyOPCUAClient:
                     unit=mapping.unit,
                     quality=SignalQuality.UNAVAILABLE,
                     source_timestamp=None,
+                    observed_at=None,
                 )
             else:
                 values[mapping.signal] = result

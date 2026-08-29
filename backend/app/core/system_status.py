@@ -1,6 +1,11 @@
 from datetime import datetime, timezone
 
 from app.core.config import AppSettings, get_settings
+from app.equipment import (
+    EQUIPMENT_STATE_SIGNALS,
+    build_equipment_snapshot,
+    equipment_snapshot_with_data_state,
+)
 from app.models import (
     AlarmMonitoringState,
     AlarmStatus,
@@ -17,11 +22,13 @@ from app.models import (
     MappingCoverage,
     OverallState,
     SignalQuality,
+    SignalValue,
     StateSignalValue,
     SystemStatus,
 )
-from app.opcua.monitor import OPCUAMonitor
+from app.opcua.monitor import MonitorView, OPCUAMonitor
 from app.opcua.node_map import (
+    LogicalSignal,
     LogicalStateSignal,
     StateSignalKind,
     state_signal_group,
@@ -36,6 +43,7 @@ _EQUIPMENT_BY_STATE_SIGNAL = {
     LogicalStateSignal.IPPS: EquipmentId.IPPS,
     LogicalStateSignal.ARC_DETECTOR: EquipmentId.ARC_DETECTOR,
     LogicalStateSignal.OVERVOLTAGE: EquipmentId.AHVPS,
+    **EQUIPMENT_STATE_SIGNALS,
 }
 
 
@@ -133,6 +141,11 @@ def _coverage(signals: dict[LogicalStateSignal, StateSignalValue]) -> MappingCov
         trustworthy=trustworthy,
         complete=mapped == len(LogicalStateSignal) and trustworthy == len(LogicalStateSignal),
         missing=[signal.value for signal, sample in signals.items() if not sample.mapped],
+        unavailable=[
+            signal.value
+            for signal, sample in signals.items()
+            if sample.mapped and not _trusted(sample)
+        ],
     )
 
 
@@ -140,6 +153,7 @@ def _machine_state(
     source: DataSource,
     monitor: OPCUAMonitor | None,
     data_state: DataState,
+    view: MonitorView | None = None,
 ) -> dict[LogicalStateSignal, StateSignalValue]:
     configured = {}
     node_map = getattr(monitor, "node_map", None)
@@ -147,7 +161,7 @@ def _machine_state(
         configured = node_map.states_by_signal()
 
     observed = {}
-    view = monitor.view() if monitor is not None else None
+    view = view if view is not None else (monitor.view() if monitor is not None else None)
     if view is not None and view.snapshot is not None:
         machine_state = getattr(view.snapshot, "machine_state", None)
         if machine_state is not None:
@@ -172,6 +186,25 @@ def _machine_state(
             sample = sample.model_copy(update={"equipment": equipment})
         result[signal] = sample
     return result
+
+
+def _configured_equipment_readings(
+    monitor: OPCUAMonitor | None,
+) -> dict[LogicalSignal, SignalValue]:
+    node_map = getattr(monitor, "node_map", None)
+    if node_map is None:
+        return {}
+    return {
+        signal: SignalValue(
+            value=None,
+            unit=mapping.unit,
+            quality=SignalQuality.UNAVAILABLE,
+            source_timestamp=None,
+            observed_at=None,
+            mapped=True,
+        )
+        for signal, mapping in node_map.by_signal().items()
+    }
 
 
 def get_system_status(
@@ -200,9 +233,30 @@ def get_system_status(
         last_connection_attempt = view.last_connection_attempt if view is not None else None
         last_successful_read = view.last_successful_read if view is not None else None
         monitor_error = view.error if view is not None else "OPC UA monitor is unavailable"
-        equipment = {}
-        signals = _machine_state(source, monitor, data_state)
-        status_timestamp = datetime.now(timezone.utc)
+        signals = _machine_state(source, monitor, data_state, view)
+        monitor_snapshot = view.snapshot if view is not None else None
+        status_timestamp = (
+            monitor_snapshot.timestamp
+            if monitor_snapshot is not None
+            else datetime.now(timezone.utc)
+        )
+        cached_equipment = (
+            getattr(monitor_snapshot, "equipment", None)
+            if monitor_snapshot is not None
+            else None
+        )
+        equipment = (
+            equipment_snapshot_with_data_state(cached_equipment, data_state)
+            if cached_equipment is not None
+            else build_equipment_snapshot(
+                source=DataSource.OPCUA,
+                timestamp=status_timestamp,
+                sequence=0,
+                data_state=data_state,
+                readings=_configured_equipment_readings(monitor),
+                state_signals=signals,
+            )
+        )
 
     coverage = _coverage(signals)
     cps = _component("cps", signals)

@@ -20,9 +20,38 @@ class LogicalSignal(str, Enum):
     HE_LEVEL = "heLvl"
     T_HOT = "Thot"
     T_COLD = "Tcold"
+    CMPS_CURRENT = "cmps.current"
+    CFPS_POWER = "cfps.power"
+    IPPS_VOLTAGE = "ipps.voltage"
+    IPPS_CURRENT = "ipps.current"
+    AHVPS_VOLTAGE = "ahvps.voltage"
+    CHVPS_VOLTAGE = "chvps.voltage"
+    PULSE_LENGTH = "pulse_generator.length"
+    PULSE_PERIOD = "pulse_generator.period"
 
 
-REQUIRED_SIGNALS = frozenset(LogicalSignal)
+REQUIRED_SIGNALS = frozenset(
+    {
+        LogicalSignal.ION_V,
+        LogicalSignal.ION_I,
+        LogicalSignal.HEAT_V,
+        LogicalSignal.HEAT_I,
+        LogicalSignal.HE_LEVEL,
+        LogicalSignal.T_HOT,
+        LogicalSignal.T_COLD,
+    }
+)
+
+EQUIPMENT_SIGNAL_UNITS = {
+    LogicalSignal.CMPS_CURRENT: "A",
+    LogicalSignal.CFPS_POWER: "W",
+    LogicalSignal.IPPS_VOLTAGE: "V",
+    LogicalSignal.IPPS_CURRENT: "A",
+    LogicalSignal.AHVPS_VOLTAGE: "kV",
+    LogicalSignal.CHVPS_VOLTAGE: "kV",
+    LogicalSignal.PULSE_LENGTH: "ms",
+    LogicalSignal.PULSE_PERIOD: "s",
+}
 
 
 class ExpectedType(str, Enum):
@@ -67,6 +96,19 @@ class LogicalStateSignal(str, Enum):
     OVERCURRENT = "alarm.overcurrent"
     OVERVOLTAGE = "alarm.overvoltage"
     TEMPERATURE = "alarm.temperature"
+    CMPS_STATE = "cmps.state"
+    CFPS_STATE = "cfps.state"
+    CFPS_FEEDBACK = "cfps.feedback"
+    CFPS_INTERLOCK = "interlock.cfps"
+    IPPS_STATE = "ipps.state"
+    AHVPS_STATE = "ahvps.state"
+    AHVPS_PROTECTION = "ahvps.protection"
+    AHVPS_INTERLOCK = "interlock.ahvps"
+    CHVPS_STATE = "chvps.state"
+    CHVPS_PROTECTION = "chvps.protection"
+    CHVPS_INTERLOCK = "interlock.chvps"
+    PULSE_GENERATOR_STATE = "pulse_generator.state"
+    PULSE_GENERATOR_FEEDBACK = "pulse_generator.feedback"
 
 
 STATE_SIGNAL_METADATA: dict[LogicalStateSignal, tuple[StateSignalKind, str, str]] = {
@@ -95,6 +137,43 @@ STATE_SIGNAL_METADATA: dict[LogicalStateSignal, tuple[StateSignalKind, str, str]
     LogicalStateSignal.OVERCURRENT: (StateSignalKind.ALARM, "Alarms", "Overcurrent"),
     LogicalStateSignal.OVERVOLTAGE: (StateSignalKind.ALARM, "Alarms", "Overvoltage"),
     LogicalStateSignal.TEMPERATURE: (StateSignalKind.ALARM, "Alarms", "Temperature"),
+    LogicalStateSignal.CMPS_STATE: (StateSignalKind.COMPONENT, "CMPS", "State"),
+    LogicalStateSignal.CFPS_STATE: (StateSignalKind.COMPONENT, "CFPS", "State"),
+    LogicalStateSignal.CFPS_FEEDBACK: (StateSignalKind.COMPONENT, "CFPS", "Feedback"),
+    LogicalStateSignal.CFPS_INTERLOCK: (StateSignalKind.INTERLOCK, "Supplies", "CFPS"),
+    LogicalStateSignal.IPPS_STATE: (StateSignalKind.COMPONENT, "IPPS", "State"),
+    LogicalStateSignal.AHVPS_STATE: (StateSignalKind.COMPONENT, "AHVPS", "State"),
+    LogicalStateSignal.AHVPS_PROTECTION: (
+        StateSignalKind.COMPONENT,
+        "AHVPS",
+        "Protection",
+    ),
+    LogicalStateSignal.AHVPS_INTERLOCK: (
+        StateSignalKind.INTERLOCK,
+        "Supplies",
+        "AHVPS",
+    ),
+    LogicalStateSignal.CHVPS_STATE: (StateSignalKind.COMPONENT, "CHVPS", "State"),
+    LogicalStateSignal.CHVPS_PROTECTION: (
+        StateSignalKind.COMPONENT,
+        "CHVPS",
+        "Protection",
+    ),
+    LogicalStateSignal.CHVPS_INTERLOCK: (
+        StateSignalKind.INTERLOCK,
+        "Supplies",
+        "CHVPS",
+    ),
+    LogicalStateSignal.PULSE_GENERATOR_STATE: (
+        StateSignalKind.COMPONENT,
+        "Pulse Generator",
+        "State",
+    ),
+    LogicalStateSignal.PULSE_GENERATOR_FEEDBACK: (
+        StateSignalKind.COMPONENT,
+        "Pulse Generator",
+        "Feedback",
+    ),
 }
 
 
@@ -156,6 +235,15 @@ class NodeMapping(BaseModel):
         if not math.isfinite(value):
             raise ValueError("offset must be finite")
         return value
+
+    @model_validator(mode="after")
+    def validate_equipment_unit(self) -> "NodeMapping":
+        expected = EQUIPMENT_SIGNAL_UNITS.get(self.signal)
+        if expected is not None and self.unit != expected:
+            raise ValueError(
+                f"{self.signal.value} must use the established engineering unit {expected}"
+            )
+        return self
 
 
 class StateNodeMapping(BaseModel):
@@ -255,11 +343,9 @@ class NodeMap(BaseModel):
         if len(state_signal_names) != len(set(state_signal_names)):
             raise ValueError("logical state signal mappings must be unique")
         missing = REQUIRED_SIGNALS.difference(signal_names)
-        extra = set(signal_names).difference(REQUIRED_SIGNALS)
-        if missing or extra:
+        if missing:
             missing_text = ", ".join(sorted(signal.value for signal in missing)) or "none"
-            extra_text = ", ".join(sorted(signal.value for signal in extra)) or "none"
-            raise ValueError(f"node map signal mismatch (missing: {missing_text}; extra: {extra_text})")
+            raise ValueError(f"node map signal mismatch (missing: {missing_text})")
         if self.purpose == "production" and any(
             "TESTONLY" in mapping.node_id.upper() or "TEST_ONLY" in mapping.node_id.upper()
             for mapping in (*self.signals, *self.state_signals)

@@ -5,13 +5,13 @@ from datetime import datetime, timedelta, timezone
 
 from app.events.models import EventCategory, EventCreate, EventState
 from app.events.store import EventStore, EventStoreUnavailable
+from app.equipment import EQUIPMENT_STATE_SIGNALS, build_equipment_snapshot
 from app.models import (
     AlarmSeverity,
-    ConditionState,
     DataSource,
     DataState,
     EquipmentId,
-    EquipmentStatus,
+    EquipmentSnapshot,
     InterpretedState,
     SignalQuality,
     SignalValue,
@@ -19,6 +19,7 @@ from app.models import (
     TelemetryPoint,
 )
 from app.opcua.node_map import (
+    LogicalSignal,
     LogicalStateSignal,
     StateSignalKind,
     state_signal_group,
@@ -39,7 +40,7 @@ class SimulationSnapshot:
     elapsed: float
     data_state: DataState
     telemetry: TelemetryPoint
-    equipment: dict[str, EquipmentStatus]
+    equipment: EquipmentSnapshot
     state_signals: dict[LogicalStateSignal, StateSignalValue]
 
 
@@ -68,6 +69,8 @@ def _signal(value: float, unit: str, timestamp: datetime, data_state: DataState)
         unit=unit,
         quality=quality,
         source_timestamp=None if data_state == DataState.UNAVAILABLE else timestamp,
+        observed_at=timestamp,
+        mapped=True,
     )
 
 
@@ -109,88 +112,32 @@ def _observed_state(state: InterpretedState, data_state: DataState) -> Interpret
     return state if data_state in {DataState.LIVE, DataState.DEGRADED} else InterpretedState.UNKNOWN
 
 
-def _observed_condition(state: ConditionState, data_state: DataState) -> ConditionState:
-    return state if data_state in {DataState.LIVE, DataState.DEGRADED} else ConditionState.UNKNOWN
-
-
-def _build_equipment(
+def _build_equipment_readings(
     elapsed: float,
     timestamp: datetime,
     data_state: DataState,
-    scenario: dict[str, bool],
     telemetry: TelemetryPoint,
-) -> dict[str, EquipmentStatus]:
-    cmps_fault = scenario["cmps_interlock"]
-    arc_active = scenario["arc"]
-    ahvps_fault = scenario["ahvps_protection"]
-    ipps_fault = scenario["ipps_interlock"]
-    quality = _quality(data_state)
-
-    def equipment_status(
-        state: InterpretedState,
-        *,
-        feedback: ConditionState | None = None,
-        interlock: ConditionState | None = None,
-        protection: ConditionState | None = None,
-        severity: AlarmSeverity | None = None,
-        readings: dict[str, SignalValue] | None = None,
-    ) -> EquipmentStatus:
-        return EquipmentStatus(
-            state=_observed_state(state, data_state),
-            quality=quality,
-            data_state=data_state,
-            feedback=_observed_condition(feedback, data_state) if feedback is not None else None,
-            interlock=_observed_condition(interlock, data_state) if interlock is not None else None,
-            protection=_observed_condition(protection, data_state) if protection is not None else None,
-            severity=severity,
-            readings=readings or {},
-        )
-
+) -> dict[LogicalSignal, SignalValue]:
     return {
-        "cmps": equipment_status(
-            InterpretedState.FAULT if cmps_fault else InterpretedState.ON,
-            feedback=ConditionState.FAULT if cmps_fault else ConditionState.OK,
-            interlock=ConditionState.FAULT if cmps_fault else ConditionState.OK,
-            readings={"current": _signal(_wave(8.4, 0.22, 32.0, elapsed), "A", timestamp, data_state)},
+        LogicalSignal.CMPS_CURRENT: _signal(
+            _wave(8.4, 0.22, 32.0, elapsed), "A", timestamp, data_state
         ),
-        "cfps": equipment_status(
-            InterpretedState.ON,
-            feedback=ConditionState.OK,
-            interlock=ConditionState.OK,
-            readings={"power": _signal(_wave(350.0, 7.0, 37.0, elapsed, 0.5), "W", timestamp, data_state)},
+        LogicalSignal.CFPS_POWER: _signal(
+            _wave(350.0, 7.0, 37.0, elapsed, 0.5), "W", timestamp, data_state
         ),
-        "ipps": equipment_status(
-            InterpretedState.FAULT if ipps_fault else InterpretedState.ON,
-            feedback=ConditionState.FAULT if ipps_fault else ConditionState.OK,
-            interlock=ConditionState.FAULT if ipps_fault else ConditionState.OK,
-            readings={"voltage": telemetry.ionV, "current": telemetry.ionI},
+        LogicalSignal.IPPS_VOLTAGE: telemetry.ionV,
+        LogicalSignal.IPPS_CURRENT: telemetry.ionI,
+        LogicalSignal.AHVPS_VOLTAGE: _signal(
+            _wave(42.0, 0.34, 43.0, elapsed, 0.3), "kV", timestamp, data_state
         ),
-        "arc_detector": equipment_status(
-            InterpretedState.ACTIVE if arc_active else InterpretedState.INACTIVE,
-            feedback=ConditionState.FAULT if arc_active else ConditionState.OK,
-            severity=AlarmSeverity.CRITICAL,
+        LogicalSignal.CHVPS_VOLTAGE: _signal(
+            _wave(18.0, 0.23, 51.0, elapsed, 1.2), "kV", timestamp, data_state
         ),
-        "ahvps": equipment_status(
-            InterpretedState.FAULT if ahvps_fault else InterpretedState.ON,
-            feedback=ConditionState.FAULT if ahvps_fault else ConditionState.OK,
-            interlock=ConditionState.OK,
-            protection=ConditionState.FAULT if ahvps_fault else ConditionState.OK,
-            readings={"voltage": _signal(_wave(42.0, 0.34, 43.0, elapsed, 0.3), "kV", timestamp, data_state)},
+        LogicalSignal.PULSE_LENGTH: _signal(
+            _wave(2.5, 0.025, 35.0, elapsed, 0.9), "ms", timestamp, data_state
         ),
-        "chvps": equipment_status(
-            InterpretedState.ON,
-            feedback=ConditionState.OK,
-            interlock=ConditionState.OK,
-            protection=ConditionState.OK,
-            readings={"voltage": _signal(_wave(18.0, 0.23, 51.0, elapsed, 1.2), "kV", timestamp, data_state)},
-        ),
-        "pulse_generator": equipment_status(
-            InterpretedState.ON,
-            feedback=ConditionState.OK,
-            readings={
-                "pulse_length": _signal(_wave(2.5, 0.025, 35.0, elapsed, 0.9), "ms", timestamp, data_state),
-                "pulse_period": _signal(_wave(1.0, 0.012, 46.0, elapsed, 1.7), "s", timestamp, data_state),
-            },
+        LogicalSignal.PULSE_PERIOD: _signal(
+            _wave(1.0, 0.012, 46.0, elapsed, 1.7), "s", timestamp, data_state
         ),
     }
 
@@ -199,17 +146,9 @@ def _build_state_signals(
     timestamp: datetime,
     data_state: DataState,
     scenario: dict[str, bool],
-    equipment: dict[str, EquipmentStatus],
 ) -> dict[LogicalStateSignal, StateSignalValue]:
     result: dict[LogicalStateSignal, StateSignalValue] = {}
     quality = _quality(data_state)
-    equipment_by_signal = {
-        LogicalStateSignal.CMPS: EquipmentId.CMPS,
-        LogicalStateSignal.IPPS: EquipmentId.IPPS,
-        LogicalStateSignal.ARC_DETECTOR: EquipmentId.ARC_DETECTOR,
-        LogicalStateSignal.OVERVOLTAGE: EquipmentId.AHVPS,
-    }
-
     for signal in LogicalStateSignal:
         kind = state_signal_kind(signal)
         if kind == StateSignalKind.COMPONENT:
@@ -227,12 +166,59 @@ def _build_state_signals(
         if signal == LogicalStateSignal.CMPS:
             interpreted = InterpretedState.FAULT if scenario["cmps_interlock"] else InterpretedState.OK
             severity = AlarmSeverity.WARNING
+        elif signal == LogicalStateSignal.CMPS_STATE:
+            interpreted = (
+                InterpretedState.FAULT
+                if scenario["cmps_interlock"]
+                else InterpretedState.ON
+            )
+        elif signal == LogicalStateSignal.CFPS_STATE:
+            interpreted = InterpretedState.ON
+        elif signal in {
+            LogicalStateSignal.CFPS_FEEDBACK,
+            LogicalStateSignal.CFPS_INTERLOCK,
+        }:
+            interpreted = InterpretedState.OK
         elif signal == LogicalStateSignal.IPPS:
             interpreted = InterpretedState.FAULT if scenario["ipps_interlock"] else InterpretedState.OK
             severity = AlarmSeverity.WARNING
+        elif signal == LogicalStateSignal.IPPS_STATE:
+            interpreted = (
+                InterpretedState.FAULT
+                if scenario["ipps_interlock"]
+                else InterpretedState.ON
+            )
         elif signal == LogicalStateSignal.ARC_DETECTOR:
-            interpreted = equipment["arc_detector"].state
+            interpreted = (
+                InterpretedState.ACTIVE
+                if scenario["arc"]
+                else InterpretedState.INACTIVE
+            )
             severity = AlarmSeverity.CRITICAL
+        elif signal == LogicalStateSignal.AHVPS_STATE:
+            interpreted = (
+                InterpretedState.FAULT
+                if scenario["ahvps_protection"]
+                else InterpretedState.ON
+            )
+        elif signal == LogicalStateSignal.AHVPS_PROTECTION:
+            interpreted = (
+                InterpretedState.FAULT
+                if scenario["ahvps_protection"]
+                else InterpretedState.OK
+            )
+        elif signal == LogicalStateSignal.AHVPS_INTERLOCK:
+            interpreted = InterpretedState.OK
+        elif signal == LogicalStateSignal.CHVPS_STATE:
+            interpreted = InterpretedState.ON
+        elif signal in {
+            LogicalStateSignal.CHVPS_PROTECTION,
+            LogicalStateSignal.CHVPS_INTERLOCK,
+            LogicalStateSignal.PULSE_GENERATOR_FEEDBACK,
+        }:
+            interpreted = InterpretedState.OK
+        elif signal == LogicalStateSignal.PULSE_GENERATOR_STATE:
+            interpreted = InterpretedState.ON
         elif signal == LogicalStateSignal.OVERVOLTAGE:
             interpreted = InterpretedState.ACTIVE if scenario["ahvps_protection"] else InterpretedState.INACTIVE
             severity = AlarmSeverity.CRITICAL
@@ -257,7 +243,7 @@ def _build_state_signals(
             source=DataSource.SIMULATION,
             data_state=data_state,
             severity=severity,
-            equipment=equipment_by_signal.get(signal),
+            equipment=EQUIPMENT_STATE_SIGNALS.get(signal),
         )
     return result
 
@@ -274,8 +260,16 @@ def simulation_snapshot(
     scenario = _scenario(elapsed, problem_cycle_seconds)
     data_state = data_state or (DataState.DEGRADED if scenario["degraded"] else DataState.LIVE)
     telemetry = _build_telemetry(elapsed, timestamp, data_state)
-    equipment = _build_equipment(elapsed, timestamp, data_state, scenario, telemetry)
-    state_signals = _build_state_signals(timestamp, data_state, scenario, equipment)
+    readings = _build_equipment_readings(elapsed, timestamp, data_state, telemetry)
+    state_signals = _build_state_signals(timestamp, data_state, scenario)
+    equipment = build_equipment_snapshot(
+        source=DataSource.SIMULATION,
+        timestamp=timestamp,
+        sequence=int(elapsed),
+        data_state=data_state,
+        readings=readings,
+        state_signals=state_signals,
+    )
     return SimulationSnapshot(
         timestamp=timestamp,
         elapsed=elapsed,
@@ -298,7 +292,7 @@ def simulation_equipment(
     *,
     problem_cycle_seconds: float = DEFAULT_SIMULATION_PROBLEM_CYCLE_SECONDS,
     data_state: DataState | None = None,
-) -> dict[str, EquipmentStatus]:
+) -> EquipmentSnapshot:
     return simulation_snapshot(
         problem_cycle_seconds=problem_cycle_seconds,
         elapsed=elapsed,

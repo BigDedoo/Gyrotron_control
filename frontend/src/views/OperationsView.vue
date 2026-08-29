@@ -8,9 +8,9 @@ import StatusPill from '@/components/hmi/StatusPill.vue'
 import { formatSignal, formatTimestamp, stateLabel } from '@/lib/hmi'
 import type {
   CommandCapability,
-  EquipmentStatus,
-  InterlockStatus,
+  EquipmentStatusBase,
   LogicalCommand,
+  SignalValue,
   StateSignalValue,
   SystemStatus
 } from '@/api/types'
@@ -34,45 +34,19 @@ const disabledControl = [
   'cursor-not-allowed'
 ]
 
-function interlock(logicalName: string) {
-  return props.status?.interlocks.find((item) => item.logical_name === logicalName) ?? null
-}
-function alarm(logicalName: string) {
-  return props.status?.alarms.signals.find((item) => item.logical_name === logicalName) ?? null
-}
-function equipment(key: string) {
-  return props.status?.equipment[key] ?? null
-}
-function equipmentDataState(item: EquipmentStatus | null) {
-  return item?.data_state ?? props.status?.data_state ?? 'unavailable'
-}
-function equipmentState(key: string, fallback = 'unknown') {
-  const item = equipment(key)
+function equipmentState(item: EquipmentStatusBase | null | undefined, fallback = 'unknown') {
   if (!item) return fallback
-  if (item.state === 'fault' || item.state === 'active') return item.state
-  const dataState = equipmentDataState(item)
-  if (dataState !== 'live') return dataState
-  return item.quality === 'good' ? item.state : item.quality
+  return trustedSignalState(item.state)
 }
-function equipmentConditionState(
-  key: string,
-  field: 'feedback' | 'interlock' | 'protection'
-) {
-  const item = equipment(key)
-  const condition = item?.[field]
-  if (condition === 'fault') return condition
-  if (!item) return 'unknown'
-  const dataState = equipmentDataState(item)
-  if (dataState !== 'live') return dataState
-  return item.quality === 'good' ? condition ?? 'unknown' : item.quality
+function equipmentConditionState(signal: StateSignalValue | null | undefined) {
+  return trustedSignalState(signal)
 }
-function readingMuted(item: EquipmentStatus | null, reading: string) {
-  const value = item?.readings[reading]
-  return !value || value.quality !== 'good' || equipmentDataState(item) !== 'live'
+function readingMuted(value: SignalValue | null | undefined) {
+  return !value?.mapped || value.quality !== 'good' || props.status?.data_state !== 'live'
 }
-function readingTitle(item: EquipmentStatus | null, reading: string) {
-  const value = item?.readings[reading]
-  return `Data ${equipmentDataState(item)} · quality ${value?.quality ?? 'unavailable'}`
+function readingTitle(value: SignalValue | null | undefined) {
+  if (!value) return 'No backend readback is available.'
+  return `${value.mapped ? 'Mapped' : 'Not mapped'} · quality ${value.quality} · source ${formatTimestamp(value.source_timestamp)} · observed ${formatTimestamp(value.observed_at)}`
 }
 function trustedSignalState(signal: StateSignalValue | null | undefined) {
   if (!signal) return 'unknown'
@@ -81,11 +55,6 @@ function trustedSignalState(signal: StateSignalValue | null | undefined) {
   if (signal.quality === 'bad' || signal.quality === 'unavailable') return signal.quality
   if (signal.data_state === 'stale' || signal.data_state === 'unavailable' || signal.data_state === 'degraded') return signal.data_state
   return signal.interpreted_state
-}
-function trustedInterlockState(item: InterlockStatus | null) {
-  if (!item) return 'unknown'
-  const signalState = trustedSignalState(item.signal)
-  return ['bad', 'unavailable', 'unmapped', 'stale', 'degraded', 'unknown'].includes(signalState) ? signalState : item.state
 }
 function signalTitle(signal: StateSignalValue | null | undefined) {
   if (!signal) return 'No backend signal is available.'
@@ -100,18 +69,22 @@ function clearPulseDrafts() {
   pulsePeriodDraft.value = ''
 }
 
-const cmps = computed(() => interlock('interlock.cmps'))
-const ipps = computed(() => interlock('interlock.ipps'))
-const arcSignal = computed(() => alarm('alarm.arc_detector'))
+const cmps = computed(() => props.status?.equipment.cmps)
+const cfps = computed(() => props.status?.equipment.cfps)
+const ipps = computed(() => props.status?.equipment.ipps)
+const arcDetector = computed(() => props.status?.equipment.arc_detector)
+const ahvps = computed(() => props.status?.equipment.hvps.ahvps)
+const chvps = computed(() => props.status?.equipment.hvps.chvps)
+const pulseGenerator = computed(() => props.status?.equipment.pulse_generator)
 const arcState = computed(() => {
-  const state = trustedSignalState(arcSignal.value)
+  const state = trustedSignalState(arcDetector.value?.state)
   if (state === 'active') return 'fault'
   if (state === 'inactive') return 'ok'
   return state
 })
 const arcLabel = computed(() => arcState.value === 'fault' ? 'ARC DETECTED' : arcState.value === 'ok' ? 'NO ARC' : stateLabel(arcState.value))
 const hvpsState = computed(() => {
-  const states = ['ahvps', 'chvps'].map((key) => equipmentState(key, 'unmapped'))
+  const states = [equipmentState(ahvps.value, 'unmapped'), equipmentState(chvps.value, 'unmapped')]
   if (states.includes('fault')) return 'fault'
   for (const state of ['unavailable', 'stale', 'degraded', 'bad', 'uncertain']) {
     if (states.includes(state)) return state
@@ -131,10 +104,10 @@ const hvpsState = computed(() => {
 
     <div class="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
       <div id="cmps-panel">
-        <EquipmentPanel title="CMPS" subtitle="Current-controlled supply" :state="equipmentState('cmps', trustedInterlockState(cmps))" :status-label="stateLabel(equipmentState('cmps', trustedInterlockState(cmps)))">
-          <EquipmentRow label="State" :state="equipmentState('cmps', trustedInterlockState(cmps))" />
-          <EquipmentRow label="Current · Actual" :value="formatSignal(equipment('cmps')?.readings.current, 2)" :muted="readingMuted(equipment('cmps'), 'current')" :title="readingTitle(equipment('cmps'), 'current')" />
-          <EquipmentRow label="Supply interlock" :state="trustedInterlockState(cmps)" :title="signalTitle(cmps?.signal)" />
+        <EquipmentPanel title="CMPS" subtitle="Current-controlled supply" :state="equipmentState(cmps)" :status-label="stateLabel(equipmentState(cmps))">
+          <EquipmentRow label="State" :state="equipmentState(cmps)" :title="signalTitle(cmps?.state)" />
+          <EquipmentRow label="Current · Actual" :value="formatSignal(cmps?.current, 2)" :muted="readingMuted(cmps?.current)" :title="readingTitle(cmps?.current)" />
+          <EquipmentRow label="Supply interlock" :state="equipmentConditionState(cmps?.interlock)" :title="signalTitle(cmps?.interlock)" />
           <template #controls>
             <div class="mb-1 text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Commands</div>
             <div class="flex min-h-7 items-center justify-between gap-2">
@@ -147,11 +120,11 @@ const hvpsState = computed(() => {
       </div>
 
       <div id="cfps-panel">
-        <EquipmentPanel title="CFPS" subtitle="Power supply" :state="equipmentState('cfps', 'unmapped')" :status-label="stateLabel(equipmentState('cfps', 'unmapped'))">
-          <EquipmentRow label="State" :state="equipmentState('cfps', 'unknown')" />
-          <EquipmentRow label="Power · Actual" :value="formatSignal(equipment('cfps')?.readings.power, 1)" :muted="readingMuted(equipment('cfps'), 'power')" :title="readingTitle(equipment('cfps'), 'power')" />
-          <EquipmentRow label="Feedback" :state="equipmentConditionState('cfps', 'feedback')" />
-          <EquipmentRow label="Interlock" :state="equipmentConditionState('cfps', 'interlock')" />
+        <EquipmentPanel title="CFPS" subtitle="Power supply" :state="equipmentState(cfps)" :status-label="stateLabel(equipmentState(cfps))">
+          <EquipmentRow label="State" :state="equipmentState(cfps)" :title="signalTitle(cfps?.state)" />
+          <EquipmentRow label="Power · Actual" :value="formatSignal(cfps?.power, 1)" :muted="readingMuted(cfps?.power)" :title="readingTitle(cfps?.power)" />
+          <EquipmentRow label="Feedback" :state="equipmentConditionState(cfps?.feedback)" :title="signalTitle(cfps?.feedback)" />
+          <EquipmentRow label="Interlock" :state="equipmentConditionState(cfps?.interlock)" :title="signalTitle(cfps?.interlock)" />
           <template #controls>
             <div class="mb-1 text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Commands</div>
             <div class="flex min-h-7 items-center justify-between gap-2">
@@ -164,19 +137,19 @@ const hvpsState = computed(() => {
       </div>
 
       <div id="ipps-panel">
-        <EquipmentPanel title="IPPS" subtitle="Ion pump power supply" :state="equipmentState('ipps', trustedInterlockState(ipps))" :status-label="stateLabel(equipmentState('ipps', trustedInterlockState(ipps)))">
-          <EquipmentRow label="State" :state="equipmentState('ipps', trustedInterlockState(ipps))" />
-          <EquipmentRow label="Ion pump voltage" :value="formatSignal(equipment('ipps')?.readings.voltage)" :muted="readingMuted(equipment('ipps'), 'voltage')" :title="readingTitle(equipment('ipps'), 'voltage')" />
-          <EquipmentRow label="Ion pump current" :value="formatSignal(equipment('ipps')?.readings.current, 2)" :muted="readingMuted(equipment('ipps'), 'current')" :title="readingTitle(equipment('ipps'), 'current')" />
-          <EquipmentRow label="Supply interlock" :state="trustedInterlockState(ipps)" :title="signalTitle(ipps?.signal)" />
+        <EquipmentPanel title="IPPS" subtitle="Ion pump power supply" :state="equipmentState(ipps)" :status-label="stateLabel(equipmentState(ipps))">
+          <EquipmentRow label="State" :state="equipmentState(ipps)" :title="signalTitle(ipps?.state)" />
+          <EquipmentRow label="Ion pump voltage" :value="formatSignal(ipps?.voltage)" :muted="readingMuted(ipps?.voltage)" :title="readingTitle(ipps?.voltage)" />
+          <EquipmentRow label="Ion pump current" :value="formatSignal(ipps?.current, 2)" :muted="readingMuted(ipps?.current)" :title="readingTitle(ipps?.current)" />
+          <EquipmentRow label="Supply interlock" :state="equipmentConditionState(ipps?.interlock)" :title="signalTitle(ipps?.interlock)" />
         </EquipmentPanel>
       </div>
 
       <div id="arc-detector-panel">
         <EquipmentPanel title="ARC DETECTOR" subtitle="Arc alarm" :state="arcState" :status-label="arcLabel">
-          <EquipmentRow label="Detector state" :state="arcState" :value="arcLabel" :title="signalTitle(arcSignal)" />
-          <EquipmentRow label="Severity" :value="arcSignal?.severity?.toUpperCase() ?? 'UNAVAILABLE'" :muted="!arcSignal?.severity" />
-          <EquipmentRow v-if="!arcSignal || arcSignal.quality !== 'good'" label="Data quality" :value="arcSignal?.quality?.toUpperCase() ?? 'UNAVAILABLE'" muted />
+          <EquipmentRow label="Detector state" :state="arcState" :value="arcLabel" :title="signalTitle(arcDetector?.state)" />
+          <EquipmentRow label="Severity" :value="arcDetector?.severity?.toUpperCase() ?? 'UNAVAILABLE'" :muted="!arcDetector?.severity" />
+          <EquipmentRow v-if="!arcDetector || arcDetector.state.quality !== 'good'" label="Data quality" :value="arcDetector?.state.quality?.toUpperCase() ?? 'UNAVAILABLE'" muted />
         </EquipmentPanel>
       </div>
 
@@ -187,12 +160,12 @@ const hvpsState = computed(() => {
             <div class="px-2 py-1.5">
               <div class="mb-1 flex items-center justify-between border-b border-slate-200 pb-1">
                 <h3 class="text-[11px] font-black tracking-[0.08em] text-slate-700">AHVPS</h3>
-                <StatusPill :state="equipmentState('ahvps', 'unmapped')" />
+                <StatusPill :state="equipmentState(ahvps, 'unmapped')" />
               </div>
-              <EquipmentRow label="State" :state="equipmentState('ahvps', 'unknown')" />
-              <EquipmentRow label="Voltage · Actual" :value="formatSignal(equipment('ahvps')?.readings.voltage, 2)" :muted="readingMuted(equipment('ahvps'), 'voltage')" :title="readingTitle(equipment('ahvps'), 'voltage')" />
-              <EquipmentRow label="Protection" :state="equipmentConditionState('ahvps', 'protection')" />
-              <EquipmentRow label="Interlock" :state="equipmentConditionState('ahvps', 'interlock')" />
+              <EquipmentRow label="State" :state="equipmentState(ahvps)" :title="signalTitle(ahvps?.state)" />
+              <EquipmentRow label="Voltage · Actual" :value="formatSignal(ahvps?.voltage, 2)" :muted="readingMuted(ahvps?.voltage)" :title="readingTitle(ahvps?.voltage)" />
+              <EquipmentRow label="Protection" :state="equipmentConditionState(ahvps?.protection)" :title="signalTitle(ahvps?.protection)" />
+              <EquipmentRow label="Interlock" :state="equipmentConditionState(ahvps?.interlock)" :title="signalTitle(ahvps?.interlock)" />
             </div>
             <div class="border-t border-slate-200 bg-slate-100/70 px-2 py-1.5">
               <div class="mb-1 text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Commands</div>
@@ -204,12 +177,12 @@ const hvpsState = computed(() => {
             <div class="px-2 py-1.5">
               <div class="mb-1 flex items-center justify-between border-b border-slate-200 pb-1">
                 <h3 class="text-[11px] font-black tracking-[0.08em] text-slate-700">CHVPS</h3>
-                <StatusPill :state="equipmentState('chvps', 'unmapped')" />
+                <StatusPill :state="equipmentState(chvps, 'unmapped')" />
               </div>
-              <EquipmentRow label="State" :state="equipmentState('chvps', 'unknown')" />
-              <EquipmentRow label="Voltage · Actual" :value="formatSignal(equipment('chvps')?.readings.voltage, 2)" :muted="readingMuted(equipment('chvps'), 'voltage')" :title="readingTitle(equipment('chvps'), 'voltage')" />
-              <EquipmentRow label="Protection" :state="equipmentConditionState('chvps', 'protection')" />
-              <EquipmentRow label="Interlock" :state="equipmentConditionState('chvps', 'interlock')" />
+              <EquipmentRow label="State" :state="equipmentState(chvps)" :title="signalTitle(chvps?.state)" />
+              <EquipmentRow label="Voltage · Actual" :value="formatSignal(chvps?.voltage, 2)" :muted="readingMuted(chvps?.voltage)" :title="readingTitle(chvps?.voltage)" />
+              <EquipmentRow label="Protection" :state="equipmentConditionState(chvps?.protection)" :title="signalTitle(chvps?.protection)" />
+              <EquipmentRow label="Interlock" :state="equipmentConditionState(chvps?.interlock)" :title="signalTitle(chvps?.interlock)" />
             </div>
             <div class="border-t border-slate-200 bg-slate-100/70 px-2 py-1.5">
               <div class="mb-1 text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Commands</div>
@@ -222,10 +195,10 @@ const hvpsState = computed(() => {
       </div>
 
       <div id="pulse-generator-panel">
-        <EquipmentPanel title="PULSE GENERATOR" subtitle="Pulse timing" :state="equipmentState('pulse_generator', 'unmapped')" :status-label="stateLabel(equipmentState('pulse_generator', 'unmapped'))">
-          <EquipmentRow label="State" :state="equipmentState('pulse_generator', 'unknown')" />
-          <EquipmentRow label="Length · Actual" :value="formatSignal(equipment('pulse_generator')?.readings.pulse_length, 3)" :muted="readingMuted(equipment('pulse_generator'), 'pulse_length')" :title="readingTitle(equipment('pulse_generator'), 'pulse_length')" />
-          <EquipmentRow label="Period · Actual" :value="formatSignal(equipment('pulse_generator')?.readings.pulse_period, 3)" :muted="readingMuted(equipment('pulse_generator'), 'pulse_period')" :title="readingTitle(equipment('pulse_generator'), 'pulse_period')" />
+        <EquipmentPanel title="PULSE GENERATOR" subtitle="Pulse timing" :state="equipmentState(pulseGenerator)" :status-label="stateLabel(equipmentState(pulseGenerator))">
+          <EquipmentRow label="State" :state="equipmentState(pulseGenerator)" :title="signalTitle(pulseGenerator?.state)" />
+          <EquipmentRow label="Length · Actual" :value="formatSignal(pulseGenerator?.pulse_length, 3)" :muted="readingMuted(pulseGenerator?.pulse_length)" :title="readingTitle(pulseGenerator?.pulse_length)" />
+          <EquipmentRow label="Period · Actual" :value="formatSignal(pulseGenerator?.pulse_period, 3)" :muted="readingMuted(pulseGenerator?.pulse_period)" :title="readingTitle(pulseGenerator?.pulse_period)" />
           <template #controls>
             <div class="mb-1 text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Commands</div>
             <div class="flex min-h-7 items-center justify-between gap-2">

@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import AppSettings, OPCUASettings
-from app.opcua.node_map import LogicalSignal, NodeMapError, load_node_map
+from app.opcua.node_map import REQUIRED_SIGNALS, LogicalSignal, NodeMapError, load_node_map
 from tests.opcua_simulator import TEST_UNITS
 
 
@@ -41,6 +41,42 @@ def test_production_node_map_requires_every_unique_logical_signal(tmp_path: Path
     _write_map(missing, omit=LogicalSignal.T_COLD)
     with pytest.raises(NodeMapError):
         load_node_map(missing)
+
+
+def test_production_node_map_allows_optional_equipment_signals_to_be_partial(
+    tmp_path: Path,
+):
+    partial = tmp_path / "partial.json"
+    _write_map(partial)
+    payload = json.loads(partial.read_text(encoding="utf-8"))
+    payload["signals"] = [
+        mapping
+        for mapping in payload["signals"]
+        if LogicalSignal(mapping["signal"]) in REQUIRED_SIGNALS
+        or mapping["signal"] == LogicalSignal.CMPS_CURRENT.value
+    ]
+    partial.write_text(json.dumps(payload), encoding="utf-8")
+
+    node_map = load_node_map(partial)
+    assert set(node_map.by_signal()) == set(REQUIRED_SIGNALS) | {
+        LogicalSignal.CMPS_CURRENT
+    }
+
+
+def test_equipment_signal_units_are_fixed_by_the_software_contract(tmp_path: Path):
+    path = tmp_path / "wrong-equipment-unit.json"
+    _write_map(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mapping = next(
+        item
+        for item in payload["signals"]
+        if item["signal"] == LogicalSignal.CMPS_CURRENT.value
+    )
+    mapping["unit"] = "V"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(NodeMapError):
+        load_node_map(path)
 
 
 def test_unknown_top_level_node_map_property_is_rejected(tmp_path: Path):
@@ -99,7 +135,7 @@ def test_committed_example_node_map_remains_valid():
     example = Path(__file__).resolve().parents[1] / "config" / "opcua_nodes.example.json"
     node_map = load_node_map(example, allowed_purposes=frozenset({"template"}))
 
-    assert set(node_map.by_signal()) == set(LogicalSignal)
+    assert set(node_map.by_signal()) == set(REQUIRED_SIGNALS)
 
 
 def test_template_and_placeholder_maps_cannot_be_used_as_production(tmp_path: Path):

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app.events.detector import EventTransitionDetector
+from app.equipment import build_equipment_snapshot
 from app.events.models import EventCategory, EventState
 from app.events.store import EventStore
 from app.models import (
@@ -86,6 +87,7 @@ def _status(
         severity=AlarmSeverity.CRITICAL,
         equipment=EquipmentId.ARC_DETECTOR,
     )
+    timestamp = datetime.now(timezone.utc)
     return SystemStatus(
         mode=AppMode.OPCUA_READONLY,
         source=DataSource.OPCUA,
@@ -109,8 +111,16 @@ def _status(
             active=[],
             signals=[alarm_signal],
         ),
+        equipment=build_equipment_snapshot(
+            source=DataSource.OPCUA,
+            timestamp=timestamp,
+            sequence=0,
+            data_state=data_state,
+            readings={},
+            state_signals={},
+        ),
         coverage=MappingCoverage(total=25, mapped=2, trustworthy=2, complete=False, missing=[]),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=timestamp,
     )
 
 

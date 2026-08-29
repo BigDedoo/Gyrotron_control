@@ -115,7 +115,13 @@ function raw(value: boolean | number | null) {
           <div class="rounded bg-slate-50 p-3"><dt class="text-[10px] uppercase text-slate-400">Trustworthy</dt><dd class="mt-1 text-2xl font-bold">{{ status?.coverage.trustworthy ?? 0 }}</dd></div>
           <div class="rounded bg-slate-50 p-3"><dt class="text-[10px] uppercase text-slate-400">Complete</dt><dd class="mt-2"><StatusPill :state="status?.coverage.complete ? 'ok' : 'warning'" :label="status?.coverage.complete ? 'YES' : 'NO'" /></dd></div>
         </dl>
-        <div v-if="status?.coverage.missing.length" class="border-t p-3"><div class="mb-1 text-[10px] font-bold uppercase text-slate-400">Missing</div><div class="flex flex-wrap gap-1"><span v-for="item in status.coverage.missing" :key="item" class="rounded bg-slate-100 px-2 py-1 text-[10px]">{{ item }}</span></div></div>
+        <div v-if="status?.coverage.missing.length" class="border-t p-3"><div class="mb-1 text-[10px] font-bold uppercase text-slate-400">Missing machine-state signals</div><div class="flex flex-wrap gap-1"><span v-for="item in status.coverage.missing" :key="item" class="rounded bg-slate-100 px-2 py-1 text-[10px]">{{ item }}</span></div></div>
+        <div class="border-t p-3">
+          <div class="mb-2 text-[10px] font-bold uppercase text-slate-400">Equipment contract mapping</div>
+          <div class="grid grid-cols-3 gap-2 text-center text-[10px]"><div class="rounded bg-slate-50 p-2"><div class="text-slate-400">Mapped</div><div class="font-bold">{{ status?.equipment.coverage.mapped ?? 0 }} / {{ status?.equipment.coverage.total ?? 0 }}</div></div><div class="rounded bg-slate-50 p-2"><div class="text-slate-400">Trustworthy</div><div class="font-bold">{{ status?.equipment.coverage.trustworthy ?? 0 }}</div></div><div class="rounded bg-slate-50 p-2"><div class="text-slate-400">Complete</div><div class="font-bold">{{ status?.equipment.coverage.complete ? 'YES' : 'NO' }}</div></div></div>
+          <div v-if="status?.equipment.coverage.missing.length" class="mt-2"><div class="mb-1 text-[9px] font-bold uppercase text-slate-400">Not mapped</div><div class="flex flex-wrap gap-1"><span v-for="item in status.equipment.coverage.missing" :key="item" class="rounded bg-amber-50 px-2 py-1 text-[9px] text-amber-800">{{ item }}</span></div></div>
+          <div v-if="status?.equipment.coverage.unavailable.length" class="mt-2"><div class="mb-1 text-[9px] font-bold uppercase text-slate-400">Mapped but unavailable</div><div class="flex flex-wrap gap-1"><span v-for="item in status.equipment.coverage.unavailable" :key="item" class="rounded bg-slate-100 px-2 py-1 text-[9px]">{{ item }}</span></div></div>
+        </div>
       </section>
 
       <section class="rounded-lg border bg-white shadow-sm xl:row-span-2">

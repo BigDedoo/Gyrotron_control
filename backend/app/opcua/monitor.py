@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.core.config import OPCUASettings
+from app.equipment import build_equipment_snapshot
 from app.models import (
     ConnectionState,
     DataSource,
@@ -16,7 +17,11 @@ from app.models import (
     TelemetryPoint,
 )
 from app.opcua.client import OPCUAClientError, ReadOnlyOPCUAClient
-from app.opcua.node_map import LogicalSignal, LogicalStateSignal, NodeMap
+from app.opcua.node_map import (
+    REQUIRED_SIGNALS,
+    LogicalStateSignal,
+    NodeMap,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -103,7 +108,7 @@ class OPCUAMonitor:
         ):
             return DataState.STALE
         qualities = [
-            getattr(snapshot.telemetry, signal.value).quality for signal in LogicalSignal
+            getattr(snapshot.telemetry, signal.value).quality for signal in REQUIRED_SIGNALS
         ]
         qualities.extend(sample.quality for sample in snapshot.machine_state.signals.values())
         state_interpretations_valid = all(
@@ -161,10 +166,12 @@ class OPCUAMonitor:
         values = await self.client.read_signals(self.node_map.signals)
         state_values = await self.client.read_state_signals(self.node_map.state_signals)
         usable = [
-            sample
-            for sample in values.values()
-            if sample.value is not None
-            and sample.quality in {SignalQuality.GOOD, SignalQuality.UNCERTAIN}
+            values[signal]
+            for signal in REQUIRED_SIGNALS
+            if (
+                values[signal].value is not None
+                and values[signal].quality in {SignalQuality.GOOD, SignalQuality.UNCERTAIN}
+            )
         ]
         if not usable:
             raise OPCUAClientError("No configured telemetry signal is usable")
@@ -175,7 +182,7 @@ class OPCUAMonitor:
             timestamp=now,
             source=DataSource.OPCUA,
             sequence=self._sequence,
-            **{signal.value: values[signal] for signal in LogicalSignal},
+            **{signal.value: values[signal] for signal in REQUIRED_SIGNALS},
         )
         mapped = set(state_values)
         trustworthy = sum(
@@ -192,6 +199,12 @@ class OPCUAMonitor:
                 and trustworthy == len(LogicalStateSignal)
             ),
             missing=[signal.value for signal in LogicalStateSignal if signal not in mapped],
+            unavailable=[
+                signal.value
+                for signal, sample in state_values.items()
+                if sample.quality != SignalQuality.GOOD
+                or sample.interpreted_state == InterpretedState.UNKNOWN
+            ],
         )
         machine_state = MachineStatePoint(
             timestamp=now,
@@ -205,6 +218,14 @@ class OPCUAMonitor:
             sequence=self._sequence,
             telemetry=telemetry,
             machine_state=machine_state,
+            equipment=build_equipment_snapshot(
+                source=DataSource.OPCUA,
+                timestamp=now,
+                sequence=self._sequence,
+                data_state=DataState.LIVE,
+                readings=values,
+                state_signals=state_values,
+            ),
         )
         self._last_successful_read = now
         self._connection_state = ConnectionState.CONNECTED

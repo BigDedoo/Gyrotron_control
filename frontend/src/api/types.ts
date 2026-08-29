@@ -26,6 +26,8 @@ export interface SignalValue {
   unit: string
   quality: SignalQuality
   source_timestamp: string | null
+  observed_at: string | null
+  mapped: boolean
 }
 
 export interface TelemetryPoint {
@@ -66,15 +68,62 @@ export interface ComponentStatus {
   signals: Record<string, StateSignalValue>
 }
 
-export interface EquipmentStatus {
-  state: InterpretedState
+export interface EquipmentStatusBase {
+  state: StateSignalValue
   quality: SignalQuality
   data_state: DataState
-  feedback: ConditionState | null
-  interlock: ConditionState | null
-  protection: ConditionState | null
+}
+
+export interface CMPSEquipmentStatus extends EquipmentStatusBase {
+  current: SignalValue
+  interlock: StateSignalValue
+}
+
+export interface CFPSEquipmentStatus extends EquipmentStatusBase {
+  power: SignalValue
+  feedback: StateSignalValue
+  interlock: StateSignalValue
+}
+
+export interface IPPSEquipmentStatus extends EquipmentStatusBase {
+  voltage: SignalValue
+  current: SignalValue
+  interlock: StateSignalValue
+}
+
+export interface ArcDetectorEquipmentStatus extends EquipmentStatusBase {
   severity: AlarmSeverity | null
-  readings: Record<string, SignalValue>
+}
+
+export interface HVPSSupplyEquipmentStatus extends EquipmentStatusBase {
+  voltage: SignalValue
+  protection: StateSignalValue
+  interlock: StateSignalValue
+}
+
+export interface HVPSEquipmentStatus {
+  ahvps: HVPSSupplyEquipmentStatus
+  chvps: HVPSSupplyEquipmentStatus
+}
+
+export interface PulseGeneratorEquipmentStatus extends EquipmentStatusBase {
+  pulse_length: SignalValue
+  pulse_period: SignalValue
+  feedback: StateSignalValue
+}
+
+export interface EquipmentSnapshot {
+  timestamp: string
+  source: DataSource
+  sequence: number
+  data_state: DataState
+  cmps: CMPSEquipmentStatus
+  cfps: CFPSEquipmentStatus
+  ipps: IPPSEquipmentStatus
+  arc_detector: ArcDetectorEquipmentStatus
+  hvps: HVPSEquipmentStatus
+  pulse_generator: PulseGeneratorEquipmentStatus
+  coverage: MappingCoverage
 }
 
 export interface InterlockStatus {
@@ -106,6 +155,7 @@ export interface MappingCoverage {
   trustworthy: number
   complete: boolean
   missing: string[]
+  unavailable: string[]
 }
 
 export interface SystemStatus {
@@ -118,7 +168,7 @@ export interface SystemStatus {
   aps: ComponentStatus
   interlocks: InterlockStatus[]
   alarms: AlarmSummary
-  equipment: Record<string, EquipmentStatus>
+  equipment: EquipmentSnapshot
   coverage: MappingCoverage
   timestamp: string
   last_connection_attempt: string | null
