@@ -38,27 +38,29 @@ class Requirement(str, Enum):
     LATCHING = "latching"
     RECOVERY = "recovery"
     SEVERITY = "severity"
-    EXPORTED_SYMBOL_SELECTION = "exported_symbol_selection"
-    PROCESS_IMAGE_CONFIGURATION = "process_image_configuration"
-    CURRENT_FB_VERIFICATION = "current_fb_verification"
+    FIELD_SELECTION = "field_selection"
+    PROCESS_IMAGE_REPRESENTATION = "process_image_representation"
 
 
 class ReadinessBlocker(str, Enum):
-    NEEDS_OPCUA_DISCOVERY = "NEEDS_OPCUA_DISCOVERY"
+    NEEDS_NODE_ID_DISCOVERY = "NEEDS_NODE_ID_DISCOVERY"
     NEEDS_TYPE = "NEEDS_TYPE"
     NEEDS_CONVERSION = "NEEDS_CONVERSION"
     NEEDS_RANGE_APPROVAL = "NEEDS_RANGE_APPROVAL"
     NEEDS_INTERPRETATION = "NEEDS_INTERPRETATION"
     NEEDS_POLARITY_VERIFICATION = "NEEDS_POLARITY_VERIFICATION"
     NEEDS_SIGNAL_SELECTION = "NEEDS_SIGNAL_SELECTION"
-    NEEDS_EXPORTED_SYMBOL_SELECTION = "NEEDS_EXPORTED_SYMBOL_SELECTION"
+    NEEDS_CONTROLS_APPROVAL_FOR_FIELD_SELECTION = (
+        "NEEDS_CONTROLS_APPROVAL_FOR_FIELD_SELECTION"
+    )
     NEEDS_AGGREGATION = "NEEDS_AGGREGATION"
     NEEDS_LATCHING = "NEEDS_LATCHING"
     NEEDS_RECOVERY_SEMANTICS = "NEEDS_RECOVERY_SEMANTICS"
     NEEDS_SEVERITY_APPROVAL = "NEEDS_SEVERITY_APPROVAL"
     NEEDS_CONTROLS_VERIFICATION = "NEEDS_CONTROLS_VERIFICATION"
-    NEEDS_750_471_CONFIGURATION = "NEEDS_750_471_CONFIGURATION"
-    NEEDS_CURRENT_FB_VERIFICATION = "NEEDS_CURRENT_FB_VERIFICATION"
+    NEEDS_750_471_PROCESS_REPRESENTATION_VERIFICATION = (
+        "NEEDS_750_471_PROCESS_REPRESENTATION_VERIFICATION"
+    )
 
 
 class CommissioningFact(BaseModel):
@@ -132,9 +134,11 @@ class CommissioningField(BaseModel):
     latching: CommissioningFact = Field(default_factory=_unresolved_fact)
     recovery: CommissioningFact = Field(default_factory=_unresolved_fact)
     severity: CommissioningFact = Field(default_factory=_unresolved_fact)
-    exported_symbol_selection: CommissioningFact = Field(default_factory=_unresolved_fact)
-    process_image_configuration: CommissioningFact = Field(default_factory=_unresolved_fact)
-    current_fb_verification: CommissioningFact = Field(default_factory=_unresolved_fact)
+    field_selection: CommissioningFact = Field(default_factory=_unresolved_fact)
+    exported_symbol_path: CommissioningFact = Field(default_factory=_unresolved_fact)
+    symbol_config_access: CommissioningFact = Field(default_factory=_unresolved_fact)
+    electrical_input_mode: CommissioningFact = Field(default_factory=_unresolved_fact)
+    process_image_representation: CommissioningFact = Field(default_factory=_unresolved_fact)
     candidates: tuple[CandidateSource, ...] = ()
     notes: tuple[str, ...] = ()
 
@@ -173,6 +177,15 @@ class CommissioningField(BaseModel):
             raise ValueError(
                 "MISSING_PHYSICAL_SOURCE cannot declare a current PLC source"
             )
+        if self.exported_symbol_path.value is not None:
+            if not self.exported_symbol_path.ready:
+                raise ValueError("an exported symbol path must be approved")
+            if self.exported_symbol_path.confidence != Confidence.CONFIRMED:
+                raise ValueError("an exported symbol path must be confirmed")
+            if self.symbol_config_access.value not in {"Read", "ReadWrite"}:
+                raise ValueError("an exported symbol requires Read or ReadWrite access")
+            if not self.symbol_config_access.ready:
+                raise ValueError("exported symbol access must be approved")
         return self
 
 
@@ -193,6 +206,35 @@ class ControllerMetadata(BaseModel):
     opcua_server_version: CommissioningFact
 
 
+class SymbolConfigurationMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    project: CommissioningFact
+    device: CommissioningFact
+    application: CommissioningFact
+    schema_header_version: CommissioningFact
+    symbol_config_object_version: CommissioningFact
+    runtimeid: CommissioningFact
+    compiler: CommissioningFact
+    lmm: CommissioningFact
+    profile: CommissioningFact
+    libversion: CommissioningFact
+    support_opcua: CommissioningFact
+    read_exports: tuple[str, ...]
+    readwrite_exports: tuple[str, ...]
+    security_note: str = Field(min_length=1, max_length=2048)
+
+
+class ForbiddenSubstitute(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    application_field: str = Field(min_length=1, max_length=128)
+    physical_address: str | None = Field(default=None, min_length=1, max_length=128)
+    plc_symbol: str = Field(min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=1024)
+    confidence: Literal[Confidence.CONFIRMED]
+
+
 class EquipmentIdentity(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -207,7 +249,11 @@ class EquipmentIdentity(BaseModel):
 class GlobalCommissioningIssue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: Literal["750_471_parameterization", "poor_vacuum_polarity"]
+    name: Literal[
+        "750_471_process_representation",
+        "poor_vacuum_polarity",
+        "cfps_stabilization_polarity",
+    ]
     blocker: ReadinessBlocker
     affected_signals: tuple[str, ...]
     resolution: CommissioningFact
@@ -273,7 +319,12 @@ EXPECTED_REQUIREMENTS = {
         Requirement.CONVERSION,
         Requirement.RANGE,
     },
-    ("cfps", "feedback"): {Requirement.NODE_ID, Requirement.TYPE, Requirement.INTERPRETATION},
+    ("cfps", "feedback"): {
+        Requirement.NODE_ID,
+        Requirement.TYPE,
+        Requirement.INTERPRETATION,
+        Requirement.FIELD_SELECTION,
+    },
     ("cfps", "interlock"): {
         Requirement.NODE_ID,
         Requirement.TYPE,
@@ -286,16 +337,14 @@ EXPECTED_REQUIREMENTS = {
         Requirement.TYPE,
         Requirement.CONVERSION,
         Requirement.RANGE,
-        Requirement.EXPORTED_SYMBOL_SELECTION,
-        Requirement.PROCESS_IMAGE_CONFIGURATION,
+        Requirement.PROCESS_IMAGE_REPRESENTATION,
     },
     ("ipps", "current"): {
         Requirement.NODE_ID,
         Requirement.TYPE,
         Requirement.CONVERSION,
         Requirement.RANGE,
-        Requirement.EXPORTED_SYMBOL_SELECTION,
-        Requirement.PROCESS_IMAGE_CONFIGURATION,
+        Requirement.PROCESS_IMAGE_REPRESENTATION,
     },
     ("ipps", "interlock"): {
         Requirement.NODE_ID,
@@ -325,10 +374,7 @@ EXPECTED_REQUIREMENTS = {
         Requirement.CONVERSION,
         Requirement.RANGE,
     },
-    ("ahvps", "protection"): {
-        Requirement.NODE_ID,
-        Requirement.CURRENT_FB_VERIFICATION,
-    },
+    ("ahvps", "protection"): {Requirement.NODE_ID, Requirement.TYPE, Requirement.INTERPRETATION},
     ("ahvps", "interlock"): {
         Requirement.NODE_ID,
         Requirement.TYPE,
@@ -347,10 +393,7 @@ EXPECTED_REQUIREMENTS = {
         Requirement.RANGE,
         Requirement.POLARITY,
     },
-    ("chvps", "protection"): {
-        Requirement.NODE_ID,
-        Requirement.CURRENT_FB_VERIFICATION,
-    },
+    ("chvps", "protection"): {Requirement.NODE_ID, Requirement.TYPE, Requirement.INTERPRETATION},
     ("chvps", "interlock"): {
         Requirement.NODE_ID,
         Requirement.TYPE,
@@ -400,13 +443,15 @@ EXPECTED_COMMON_PARAMETERS = frozenset(
 class ProductionCommissioningTemplate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     purpose: Literal["production-template"]
     status: Literal["incomplete", "under-review", "complete"]
     warning: str = Field(min_length=1, max_length=512)
     controller: ControllerMetadata
+    symbol_configuration: SymbolConfigurationMetadata
     equipment_identities: tuple[EquipmentIdentity, ...]
     global_issues: tuple[GlobalCommissioningIssue, ...]
+    forbidden_substitutes: tuple[ForbiddenSubstitute, ...]
     common_opcua: tuple[CommonParameter, ...]
     fields: tuple[CommissioningField, ...]
 
@@ -451,13 +496,26 @@ class ProductionCommissioningTemplate(BaseModel):
         if identities != {("AHVPS", "APS"), ("CHVPS", "CPS")}:
             raise ValueError("equipment identity evidence is incomplete")
         issue_names = {item.name for item in self.global_issues}
-        if issue_names != {"750_471_parameterization", "poor_vacuum_polarity"}:
+        if issue_names != {
+            "750_471_process_representation",
+            "poor_vacuum_polarity",
+            "cfps_stabilization_polarity",
+        }:
             raise ValueError("global commissioning issues are incomplete")
+        expected_substitutes = {
+            "cfps.power",
+            "chvps.voltage",
+            "ahvps.voltage",
+            "pulse_generator.length",
+            "ipps.hv_active",
+        }
+        if {item.application_field for item in self.forbidden_substitutes} != expected_substitutes:
+            raise ValueError("forbidden readback substitutes are incomplete")
         return self
 
 
 REQUIREMENT_BLOCKERS = {
-    Requirement.NODE_ID: ("node_id", ReadinessBlocker.NEEDS_OPCUA_DISCOVERY),
+    Requirement.NODE_ID: ("node_id", ReadinessBlocker.NEEDS_NODE_ID_DISCOVERY),
     Requirement.TYPE: ("plc_type", ReadinessBlocker.NEEDS_TYPE),
     Requirement.CONVERSION: ("conversion", ReadinessBlocker.NEEDS_CONVERSION),
     Requirement.RANGE: ("engineering_range", ReadinessBlocker.NEEDS_RANGE_APPROVAL),
@@ -474,17 +532,13 @@ REQUIREMENT_BLOCKERS = {
     Requirement.LATCHING: ("latching", ReadinessBlocker.NEEDS_LATCHING),
     Requirement.RECOVERY: ("recovery", ReadinessBlocker.NEEDS_RECOVERY_SEMANTICS),
     Requirement.SEVERITY: ("severity", ReadinessBlocker.NEEDS_SEVERITY_APPROVAL),
-    Requirement.EXPORTED_SYMBOL_SELECTION: (
-        "exported_symbol_selection",
-        ReadinessBlocker.NEEDS_EXPORTED_SYMBOL_SELECTION,
+    Requirement.FIELD_SELECTION: (
+        "field_selection",
+        ReadinessBlocker.NEEDS_CONTROLS_APPROVAL_FOR_FIELD_SELECTION,
     ),
-    Requirement.PROCESS_IMAGE_CONFIGURATION: (
-        "process_image_configuration",
-        ReadinessBlocker.NEEDS_750_471_CONFIGURATION,
-    ),
-    Requirement.CURRENT_FB_VERIFICATION: (
-        "current_fb_verification",
-        ReadinessBlocker.NEEDS_CURRENT_FB_VERIFICATION,
+    Requirement.PROCESS_IMAGE_REPRESENTATION: (
+        "process_image_representation",
+        ReadinessBlocker.NEEDS_750_471_PROCESS_REPRESENTATION_VERIFICATION,
     ),
 }
 
@@ -496,6 +550,7 @@ class FieldReadiness(BaseModel):
     field: str
     logical_signal: str
     source_status: PhysicalSourceStatus
+    exported_symbol_confirmed: bool
     blockers: tuple[ReadinessBlocker, ...]
 
 
@@ -505,6 +560,7 @@ class ReadinessCounts(BaseModel):
     plc_source_confirmed: int
     partially_resolved: int
     missing_physical_source: int
+    exported_symbol_confirmed: int
     needs_opcua_discovery: int
 
 
@@ -554,6 +610,7 @@ def field_readiness(field: CommissioningField) -> FieldReadiness:
         field=field.field,
         logical_signal=field.logical_signal,
         source_status=source_status,
+        exported_symbol_confirmed=field.exported_symbol_path.ready,
         blockers=tuple(blockers),
     )
 
@@ -581,8 +638,9 @@ def readiness_report(
             field.source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
             for field in fields
         ),
+        exported_symbol_confirmed=sum(field.exported_symbol_confirmed for field in fields),
         needs_opcua_discovery=sum(
-            ReadinessBlocker.NEEDS_OPCUA_DISCOVERY in field.blockers for field in fields
+            ReadinessBlocker.NEEDS_NODE_ID_DISCOVERY in field.blockers for field in fields
         ),
     )
     return CommissioningReadiness(
@@ -621,6 +679,7 @@ def format_readiness_report(
         f"  PLC source confirmed: {report.counts.plc_source_confirmed}",
         f"  Partially resolved: {report.counts.partially_resolved}",
         f"  Missing physical source: {report.counts.missing_physical_source}",
+        f"  Exported symbol confirmed: {report.counts.exported_symbol_confirmed}",
         f"  Needs OPC UA discovery: {report.counts.needs_opcua_discovery}",
         "",
     ]
@@ -631,6 +690,8 @@ def format_readiness_report(
             lines.extend((current_equipment.upper(),))
         lines.append(f"  {item.field} ({item.logical_signal})")
         lines.append(f"    {item.source_status.value.upper()}")
+        if item.exported_symbol_confirmed:
+            lines.append("    EXPORTED_SYMBOL_CONFIRMED")
         lines.extend(f"    {blocker.value}" for blocker in item.blockers)
     lines.extend(("", "COMMON OPC UA CONFIGURATION"))
     if report.common_missing:
@@ -688,7 +749,7 @@ def _opcua_discovery_status(field: CommissioningField) -> str:
         return "NOT APPLICABLE UNTIL SOURCE EXISTS"
     if field.physical_source_status == PhysicalSourceStatus.UNKNOWN:
         return "UNKNOWN"
-    return ReadinessBlocker.NEEDS_OPCUA_DISCOVERY.value
+    return ReadinessBlocker.NEEDS_NODE_ID_DISCOVERY.value
 
 
 def _matrix_blockers(readiness: FieldReadiness) -> str:
@@ -696,6 +757,19 @@ def _matrix_blockers(readiness: FieldReadiness) -> str:
     if readiness.source_status != PhysicalSourceStatus.PLC_SOURCE_CONFIRMED:
         values.insert(0, readiness.source_status.value.upper())
     return ", ".join(dict.fromkeys(values)) or "NONE"
+
+
+def _plc_variable_column(field: CommissioningField) -> str:
+    values: list[str] = []
+    for candidate in field.candidates:
+        for value in (candidate.raw_symbol, candidate.symbol):
+            if value and value not in values:
+                values.append(value)
+    if values:
+        return "<br>".join(values)
+    if field.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE:
+        return "NOT PRESENT IN CURRENT PLC"
+    return "UNKNOWN"
 
 
 def render_commissioning_matrix(
@@ -709,31 +783,35 @@ def render_commissioning_matrix(
     for field in template.fields:
         readiness = readiness_by_key[(field.equipment, field.field)]
         conversion = _fact_text(field.conversion)
-        if field.contract_kind != "readback" and field.conversion.value is None:
-            conversion = "NOT APPLICABLE"
-        interpretation = _fact_text(field.interpretation)
-        if field.interpretation.value is None:
-            interpretation = (
-                "NOT APPLICABLE"
-                if field.contract_kind == "readback"
-                else "NEEDS VERIFICATION"
+        if field.conversion.value is None:
+            conversion = (
+                "UNKNOWN" if field.contract_kind == "readback" else "NOT APPLICABLE"
             )
+        exported_path = "UNKNOWN"
+        if field.exported_symbol_path.value is not None:
+            exported_path = _fact_text(field.exported_symbol_path)
+        elif field.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE:
+            exported_path = "NOT PRESENT IN CURRENT PLC"
         rows.append(
             "| "
             + " | ".join(
                 (
                     field.equipment.upper(),
                     field.field,
-                    _candidate_column(field, "symbol"),
-                    _candidate_column(field, "raw_symbol"),
                     _candidate_column(field, "address"),
-                    _candidate_column(field, "data_type"),
+                    _plc_variable_column(field),
+                    exported_path,
+                    "YES" if field.exported_symbol_path.ready else "NO",
+                    _fact_text(field.symbol_config_access)
+                    if field.symbol_config_access.value is not None
+                    else "NOT APPLICABLE",
+                    _fact_text(field.plc_type)
+                    if field.plc_type.value is not None
+                    else "UNKNOWN",
                     _fact_text(field.native_unit) if field.native_unit.value is not None else "UNKNOWN",
                     field.hmi_unit or "NOT APPLICABLE",
                     conversion,
-                    interpretation,
                     _source_confidence(field),
-                    field.physical_source_status.value.upper(),
                     _opcua_discovery_status(field),
                     _matrix_blockers(readiness),
                 )
@@ -752,10 +830,11 @@ def render_commissioning_matrix(
             f"- PLC source confirmed: `{report.counts.plc_source_confirmed}`",
             f"- Partially resolved: `{report.counts.partially_resolved}`",
             f"- Missing physical source: `{report.counts.missing_physical_source}`",
+            f"- Exported symbol confirmed: `{report.counts.exported_symbol_confirmed}`",
             f"- Needs OPC UA discovery: `{report.counts.needs_opcua_discovery}`",
             "- Runtime boundary: `APP_MODE=opcua_readonly` accepts only the independent strict `NodeMap` schema with `purpose=production`.",
             "",
-            "| Equipment | Field | PLC logical candidate | Raw PLC symbol | Physical address | Datatype | Native representation / unit | HMI unit | Conversion state | Semantics | Confidence | Source classification | OPC UA discovery status | Commissioning blockers |",
+            "| Equipment | HMI field | Physical PLC source | PLC variable | Exported CODESYS symbol path | Exported? | Symbol access | Expected datatype | Native unit | HMI unit | Conversion | Confidence | NodeId discovered? | Remaining blockers |",
             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
             *rows,
             "",
@@ -777,6 +856,15 @@ def render_commissioning_matrix(
                 for item in template.global_issues
             ),
             "",
+            "## Confirmed forbidden substitutes",
+            "",
+            "| Application field | Physical address | PLC / exported symbol | Reason | Confidence |",
+            "|---|---|---|---|---|",
+            *(
+                f"| {item.application_field} | {item.physical_address or 'NOT APPLICABLE'} | {item.plc_symbol} | {item.reason} | {item.confidence.value.upper()} |"
+                for item in template.forbidden_substitutes
+            ),
+            "",
             "## Common OPC UA configuration",
             "",
             "All entries below remain unresolved and require controls-engineering approval. Non-local production OPC UA must use `SignAndEncrypt`; this document does not select a SecurityPolicy.",
@@ -793,16 +881,62 @@ def render_commissioning_matrix(
             "- `STRONGLY_INFERRED` and `WEAKLY_INFERRED` are never production approval.",
             "- Setpoint outputs `%QW27`, `%QW24`, and `%QW26` are command-side context only and must not be used as actual readbacks.",
             "- The CFPS voltage-to-power relationship is unresolved and non-linear; no guessed W/V conversion is permitted.",
-            "- Raw versus converted IPPS symbols must be selected only after inspecting the CODESYS OPC UA Symbol Configuration and verifying the 750-471 process-image mode.",
+            "- The exported processed IPPS REAL symbols are selected; exact 750-471 WORD process representation still requires verification of the PLC engineering conversion.",
             "- Arc aggregation, polarity, latching, recovery, and severity remain unresolved.",
             "- Poor-vacuum physical polarity remains unresolved; current PLC logic must not be changed by this metadata task.",
         )
     )
 
 
+def render_nodeid_discovery_plan(template: ProductionCommissioningTemplate) -> str:
+    """Render the next offline commissioning step without importing a network client."""
+    report = readiness_report(template)
+    readiness_by_key = {(item.equipment, item.field): item for item in report.fields}
+    exported_fields = tuple(field for field in template.fields if field.exported_symbol_path.ready)
+    rows = []
+    for field in exported_fields:
+        readiness = readiness_by_key[(field.equipment, field.field)]
+        blockers = ", ".join(blocker.value for blocker in readiness.blockers) or "NONE"
+        rows.append(
+            "| "
+            + " | ".join(
+                (
+                    field.logical_signal,
+                    str(field.exported_symbol_path.value),
+                    _fact_text(field.plc_type),
+                    _fact_text(field.symbol_config_access),
+                    field.hmi_unit or "NOT APPLICABLE",
+                    blockers,
+                )
+            )
+            + " |"
+        )
+    return "\n".join(
+        (
+            "# Offline OPC UA NodeId discovery plan",
+            "",
+            "> This checklist is generated only from committed commissioning metadata. It makes no network calls, opens no socket, instantiates no OPC UA client, and contains no inferred NodeIds.",
+            "",
+            f"Preferred exported fields awaiting read-only discovery: **{len(exported_fields)}**",
+            "",
+            "| HMI field | Preferred exported CODESYS path | Expected datatype | Symbol config access | HMI unit | Remaining verification |",
+            "|---|---|---|---|---|---|",
+            *rows,
+            "",
+            "## Operator record for the later live browse",
+            "",
+            "For each row, record the Namespace URI, namespace index, exact NodeId, BrowseName, DataType, AccessLevel, UserAccessLevel, SourceTimestamp behavior, and engineering-unit metadata when present.",
+            "",
+            "The generated Symbol Configuration exposes command and setpoint symbols as `ReadWrite`. During the later browse, verify that the production application identity has effective `UserAccessLevel` read-only for telemetry and no write permission to command/setpoint symbols. Do not attempt writes as a test.",
+            "",
+            "Do not derive NodeIds from the exported paths. Record only exact values returned by the real server during the separately authorized read-only browse.",
+        )
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="OPC UA commissioning template tools")
-    parser.add_argument("action", choices=("report", "validate", "matrix"))
+    parser.add_argument("action", choices=("report", "validate", "matrix", "nodeid-plan"))
     parser.add_argument("template", type=Path)
     args = parser.parse_args(argv)
     try:
@@ -813,6 +947,8 @@ def main(argv: list[str] | None = None) -> int:
     report = readiness_report(template)
     if args.action == "matrix":
         print(render_commissioning_matrix(template))
+    elif args.action == "nodeid-plan":
+        print(render_nodeid_discovery_plan(template))
     else:
         print(format_readiness_report(template, report))
     if args.action == "validate" and not report.production_ready:
