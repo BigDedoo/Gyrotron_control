@@ -20,9 +20,10 @@ class Confidence(str, Enum):
 
 
 class PhysicalSourceStatus(str, Enum):
-    CANDIDATE_AVAILABLE = "candidate_available"
-    SELECTION_UNRESOLVED = "selection_unresolved"
-    NOT_RECOVERED = "not_recovered"
+    PLC_SOURCE_CONFIRMED = "plc_source_confirmed"
+    NEEDS_CONTROLS_VERIFICATION = "needs_controls_verification"
+    MISSING_PHYSICAL_SOURCE = "missing_physical_source"
+    UNKNOWN = "unknown"
 
 
 class Requirement(str, Enum):
@@ -37,21 +38,27 @@ class Requirement(str, Enum):
     LATCHING = "latching"
     RECOVERY = "recovery"
     SEVERITY = "severity"
+    EXPORTED_SYMBOL_SELECTION = "exported_symbol_selection"
+    PROCESS_IMAGE_CONFIGURATION = "process_image_configuration"
+    CURRENT_FB_VERIFICATION = "current_fb_verification"
 
 
 class ReadinessBlocker(str, Enum):
-    NEEDS_NODE_ID = "NEEDS_NODE_ID"
+    NEEDS_OPCUA_DISCOVERY = "NEEDS_OPCUA_DISCOVERY"
     NEEDS_TYPE = "NEEDS_TYPE"
     NEEDS_CONVERSION = "NEEDS_CONVERSION"
-    NEEDS_RANGE = "NEEDS_RANGE"
+    NEEDS_RANGE_APPROVAL = "NEEDS_RANGE_APPROVAL"
     NEEDS_INTERPRETATION = "NEEDS_INTERPRETATION"
-    NEEDS_POLARITY = "NEEDS_POLARITY"
+    NEEDS_POLARITY_VERIFICATION = "NEEDS_POLARITY_VERIFICATION"
     NEEDS_SIGNAL_SELECTION = "NEEDS_SIGNAL_SELECTION"
+    NEEDS_EXPORTED_SYMBOL_SELECTION = "NEEDS_EXPORTED_SYMBOL_SELECTION"
     NEEDS_AGGREGATION = "NEEDS_AGGREGATION"
     NEEDS_LATCHING = "NEEDS_LATCHING"
     NEEDS_RECOVERY_SEMANTICS = "NEEDS_RECOVERY_SEMANTICS"
-    NEEDS_SEVERITY = "NEEDS_SEVERITY"
-    BLOCKED_BY_PHYSICAL_SOURCE = "BLOCKED_BY_PHYSICAL_SOURCE"
+    NEEDS_SEVERITY_APPROVAL = "NEEDS_SEVERITY_APPROVAL"
+    NEEDS_CONTROLS_VERIFICATION = "NEEDS_CONTROLS_VERIFICATION"
+    NEEDS_750_471_CONFIGURATION = "NEEDS_750_471_CONFIGURATION"
+    NEEDS_CURRENT_FB_VERIFICATION = "NEEDS_CURRENT_FB_VERIFICATION"
 
 
 class CommissioningFact(BaseModel):
@@ -88,6 +95,7 @@ class CandidateSource(BaseModel):
 
     address: str | None = Field(default=None, min_length=1, max_length=128)
     symbol: str | None = Field(default=None, min_length=1, max_length=256)
+    raw_symbol: str | None = Field(default=None, min_length=1, max_length=256)
     data_type: str | None = Field(default=None, min_length=1, max_length=128)
     native_unit: str | None = Field(default=None, min_length=1, max_length=64)
     role: str = Field(min_length=1, max_length=256)
@@ -96,8 +104,8 @@ class CandidateSource(BaseModel):
 
     @model_validator(mode="after")
     def candidate_has_identity(self) -> "CandidateSource":
-        if self.address is None and self.symbol is None:
-            raise ValueError("a candidate source requires an address or symbol")
+        if self.address is None and self.symbol is None and self.raw_symbol is None:
+            raise ValueError("a candidate source requires an address or PLC symbol")
         return self
 
 
@@ -124,6 +132,9 @@ class CommissioningField(BaseModel):
     latching: CommissioningFact = Field(default_factory=_unresolved_fact)
     recovery: CommissioningFact = Field(default_factory=_unresolved_fact)
     severity: CommissioningFact = Field(default_factory=_unresolved_fact)
+    exported_symbol_selection: CommissioningFact = Field(default_factory=_unresolved_fact)
+    process_image_configuration: CommissioningFact = Field(default_factory=_unresolved_fact)
+    current_fb_verification: CommissioningFact = Field(default_factory=_unresolved_fact)
     candidates: tuple[CandidateSource, ...] = ()
     notes: tuple[str, ...] = ()
 
@@ -150,6 +161,18 @@ class CommissioningField(BaseModel):
                 ";" in value or value.startswith("i=") or value.startswith("s=")
             ):
                 raise ValueError("approved NodeIds must use an OPC UA NodeId string")
+        if self.physical_source_status == PhysicalSourceStatus.PLC_SOURCE_CONFIRMED:
+            if not self.plc_source.ready or self.plc_source.confidence != Confidence.CONFIRMED:
+                raise ValueError(
+                    "PLC_SOURCE_CONFIRMED requires an approved, confirmed PLC source"
+                )
+        if (
+            self.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
+            and self.plc_source.value is not None
+        ):
+            raise ValueError(
+                "MISSING_PHYSICAL_SOURCE cannot declare a current PLC source"
+            )
         return self
 
 
@@ -166,6 +189,29 @@ class ControllerMetadata(BaseModel):
     vendor: CommissioningFact
     model: CommissioningFact
     runtime: CommissioningFact
+    runtime_version: CommissioningFact
+    opcua_server_version: CommissioningFact
+
+
+class EquipmentIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    application_equipment: Literal["AHVPS", "CHVPS"]
+    plc_equipment: Literal["APS", "CPS"]
+    meaning: str = Field(min_length=1, max_length=128)
+    confidence: Confidence
+    approved: bool = False
+    provenance: str = Field(min_length=1, max_length=512)
+
+
+class GlobalCommissioningIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: Literal["750_471_parameterization", "poor_vacuum_polarity"]
+    blocker: ReadinessBlocker
+    affected_signals: tuple[str, ...]
+    resolution: CommissioningFact
+    evidence: tuple[str, ...]
 
 
 EXPECTED_FIELDS = {
@@ -240,14 +286,16 @@ EXPECTED_REQUIREMENTS = {
         Requirement.TYPE,
         Requirement.CONVERSION,
         Requirement.RANGE,
-        Requirement.SIGNAL_SELECTION,
+        Requirement.EXPORTED_SYMBOL_SELECTION,
+        Requirement.PROCESS_IMAGE_CONFIGURATION,
     },
     ("ipps", "current"): {
         Requirement.NODE_ID,
         Requirement.TYPE,
         Requirement.CONVERSION,
         Requirement.RANGE,
-        Requirement.SIGNAL_SELECTION,
+        Requirement.EXPORTED_SYMBOL_SELECTION,
+        Requirement.PROCESS_IMAGE_CONFIGURATION,
     },
     ("ipps", "interlock"): {
         Requirement.NODE_ID,
@@ -270,7 +318,6 @@ EXPECTED_REQUIREMENTS = {
         Requirement.NODE_ID,
         Requirement.TYPE,
         Requirement.INTERPRETATION,
-        Requirement.SIGNAL_SELECTION,
     },
     ("ahvps", "voltage"): {
         Requirement.NODE_ID,
@@ -280,11 +327,7 @@ EXPECTED_REQUIREMENTS = {
     },
     ("ahvps", "protection"): {
         Requirement.NODE_ID,
-        Requirement.TYPE,
-        Requirement.INTERPRETATION,
-        Requirement.POLARITY,
-        Requirement.SIGNAL_SELECTION,
-        Requirement.AGGREGATION,
+        Requirement.CURRENT_FB_VERIFICATION,
     },
     ("ahvps", "interlock"): {
         Requirement.NODE_ID,
@@ -296,7 +339,6 @@ EXPECTED_REQUIREMENTS = {
         Requirement.NODE_ID,
         Requirement.TYPE,
         Requirement.INTERPRETATION,
-        Requirement.SIGNAL_SELECTION,
     },
     ("chvps", "voltage"): {
         Requirement.NODE_ID,
@@ -307,11 +349,7 @@ EXPECTED_REQUIREMENTS = {
     },
     ("chvps", "protection"): {
         Requirement.NODE_ID,
-        Requirement.TYPE,
-        Requirement.INTERPRETATION,
-        Requirement.POLARITY,
-        Requirement.SIGNAL_SELECTION,
-        Requirement.AGGREGATION,
+        Requirement.CURRENT_FB_VERIFICATION,
     },
     ("chvps", "interlock"): {
         Requirement.NODE_ID,
@@ -362,11 +400,13 @@ EXPECTED_COMMON_PARAMETERS = frozenset(
 class ProductionCommissioningTemplate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     purpose: Literal["production-template"]
     status: Literal["incomplete", "under-review", "complete"]
     warning: str = Field(min_length=1, max_length=512)
     controller: ControllerMetadata
+    equipment_identities: tuple[EquipmentIdentity, ...]
+    global_issues: tuple[GlobalCommissioningIssue, ...]
     common_opcua: tuple[CommonParameter, ...]
     fields: tuple[CommissioningField, ...]
 
@@ -404,19 +444,28 @@ class ProductionCommissioningTemplate(BaseModel):
         common_names = {item.name for item in self.common_opcua}
         if common_names != EXPECTED_COMMON_PARAMETERS:
             raise ValueError("common OPC UA commissioning parameters are incomplete")
+        identities = {
+            (item.application_equipment, item.plc_equipment)
+            for item in self.equipment_identities
+        }
+        if identities != {("AHVPS", "APS"), ("CHVPS", "CPS")}:
+            raise ValueError("equipment identity evidence is incomplete")
+        issue_names = {item.name for item in self.global_issues}
+        if issue_names != {"750_471_parameterization", "poor_vacuum_polarity"}:
+            raise ValueError("global commissioning issues are incomplete")
         return self
 
 
 REQUIREMENT_BLOCKERS = {
-    Requirement.NODE_ID: ("node_id", ReadinessBlocker.NEEDS_NODE_ID),
+    Requirement.NODE_ID: ("node_id", ReadinessBlocker.NEEDS_OPCUA_DISCOVERY),
     Requirement.TYPE: ("plc_type", ReadinessBlocker.NEEDS_TYPE),
     Requirement.CONVERSION: ("conversion", ReadinessBlocker.NEEDS_CONVERSION),
-    Requirement.RANGE: ("engineering_range", ReadinessBlocker.NEEDS_RANGE),
+    Requirement.RANGE: ("engineering_range", ReadinessBlocker.NEEDS_RANGE_APPROVAL),
     Requirement.INTERPRETATION: (
         "interpretation",
         ReadinessBlocker.NEEDS_INTERPRETATION,
     ),
-    Requirement.POLARITY: ("polarity", ReadinessBlocker.NEEDS_POLARITY),
+    Requirement.POLARITY: ("polarity", ReadinessBlocker.NEEDS_POLARITY_VERIFICATION),
     Requirement.SIGNAL_SELECTION: (
         "signal_selection",
         ReadinessBlocker.NEEDS_SIGNAL_SELECTION,
@@ -424,7 +473,19 @@ REQUIREMENT_BLOCKERS = {
     Requirement.AGGREGATION: ("aggregation", ReadinessBlocker.NEEDS_AGGREGATION),
     Requirement.LATCHING: ("latching", ReadinessBlocker.NEEDS_LATCHING),
     Requirement.RECOVERY: ("recovery", ReadinessBlocker.NEEDS_RECOVERY_SEMANTICS),
-    Requirement.SEVERITY: ("severity", ReadinessBlocker.NEEDS_SEVERITY),
+    Requirement.SEVERITY: ("severity", ReadinessBlocker.NEEDS_SEVERITY_APPROVAL),
+    Requirement.EXPORTED_SYMBOL_SELECTION: (
+        "exported_symbol_selection",
+        ReadinessBlocker.NEEDS_EXPORTED_SYMBOL_SELECTION,
+    ),
+    Requirement.PROCESS_IMAGE_CONFIGURATION: (
+        "process_image_configuration",
+        ReadinessBlocker.NEEDS_750_471_CONFIGURATION,
+    ),
+    Requirement.CURRENT_FB_VERIFICATION: (
+        "current_fb_verification",
+        ReadinessBlocker.NEEDS_CURRENT_FB_VERIFICATION,
+    ),
 }
 
 
@@ -434,7 +495,17 @@ class FieldReadiness(BaseModel):
     equipment: str
     field: str
     logical_signal: str
+    source_status: PhysicalSourceStatus
     blockers: tuple[ReadinessBlocker, ...]
+
+
+class ReadinessCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    plc_source_confirmed: int
+    partially_resolved: int
+    missing_physical_source: int
+    needs_opcua_discovery: int
 
 
 class CommissioningReadiness(BaseModel):
@@ -443,6 +514,8 @@ class CommissioningReadiness(BaseModel):
     production_ready: bool
     fields: tuple[FieldReadiness, ...]
     common_missing: tuple[str, ...]
+    global_blockers: tuple[ReadinessBlocker, ...]
+    counts: ReadinessCounts
 
 
 def load_commissioning_template(path: Path) -> ProductionCommissioningTemplate:
@@ -458,18 +531,29 @@ def load_commissioning_template(path: Path) -> ProductionCommissioningTemplate:
 
 def field_readiness(field: CommissioningField) -> FieldReadiness:
     blockers: list[ReadinessBlocker] = []
-    if field.physical_source_status == PhysicalSourceStatus.NOT_RECOVERED:
-        blockers.append(ReadinessBlocker.BLOCKED_BY_PHYSICAL_SOURCE)
-    for requirement in Requirement:
-        if requirement not in field.requirements:
-            continue
-        fact_name, blocker = REQUIREMENT_BLOCKERS[requirement]
-        if not getattr(field, fact_name).ready:
+    source_status = field.physical_source_status
+    if source_status not in {
+        PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE,
+        PhysicalSourceStatus.UNKNOWN,
+    }:
+        for requirement in Requirement:
+            if requirement not in field.requirements:
+                continue
+            fact_name, blocker = REQUIREMENT_BLOCKERS[requirement]
+            if getattr(field, fact_name).ready:
+                continue
+            if (
+                source_status == PhysicalSourceStatus.NEEDS_CONTROLS_VERIFICATION
+                and requirement
+                in {Requirement.TYPE, Requirement.INTERPRETATION, Requirement.POLARITY}
+            ):
+                continue
             blockers.append(blocker)
     return FieldReadiness(
         equipment=field.equipment,
         field=field.field,
         logical_signal=field.logical_signal,
+        source_status=source_status,
         blockers=tuple(blockers),
     )
 
@@ -481,14 +565,45 @@ def readiness_report(
     common_missing = tuple(
         parameter.name for parameter in template.common_opcua if not parameter.fact.ready
     )
+    global_blockers = tuple(
+        issue.blocker for issue in template.global_issues if not issue.resolution.ready
+    )
+    counts = ReadinessCounts(
+        plc_source_confirmed=sum(
+            field.source_status == PhysicalSourceStatus.PLC_SOURCE_CONFIRMED
+            for field in fields
+        ),
+        partially_resolved=sum(
+            field.source_status == PhysicalSourceStatus.NEEDS_CONTROLS_VERIFICATION
+            for field in fields
+        ),
+        missing_physical_source=sum(
+            field.source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
+            for field in fields
+        ),
+        needs_opcua_discovery=sum(
+            ReadinessBlocker.NEEDS_OPCUA_DISCOVERY in field.blockers for field in fields
+        ),
+    )
     return CommissioningReadiness(
         production_ready=(
             template.status == "complete"
             and not common_missing
+            and not global_blockers
             and all(not field.blockers for field in fields)
+            and all(
+                field.source_status == PhysicalSourceStatus.PLC_SOURCE_CONFIRMED
+                for field in fields
+            )
+            and all(
+                identity.approved and identity.confidence == Confidence.CONFIRMED
+                for identity in template.equipment_identities
+            )
         ),
         fields=fields,
         common_missing=common_missing,
+        global_blockers=global_blockers,
+        counts=counts,
     )
 
 
@@ -502,18 +617,29 @@ def format_readiness_report(
         f"template_status = {template.status}",
         f"production_ready = {str(report.production_ready).lower()}",
         "",
+        "SUMMARY",
+        f"  PLC source confirmed: {report.counts.plc_source_confirmed}",
+        f"  Partially resolved: {report.counts.partially_resolved}",
+        f"  Missing physical source: {report.counts.missing_physical_source}",
+        f"  Needs OPC UA discovery: {report.counts.needs_opcua_discovery}",
+        "",
     ]
     current_equipment = None
     for item in report.fields:
         if item.equipment != current_equipment:
             current_equipment = item.equipment
             lines.extend((current_equipment.upper(),))
-        blockers = item.blockers or ("READY",)
         lines.append(f"  {item.field} ({item.logical_signal})")
-        lines.extend(f"    {blocker.value if isinstance(blocker, Enum) else blocker}" for blocker in blockers)
+        lines.append(f"    {item.source_status.value.upper()}")
+        lines.extend(f"    {blocker.value}" for blocker in item.blockers)
     lines.extend(("", "COMMON OPC UA CONFIGURATION"))
     if report.common_missing:
         lines.extend(f"  UNRESOLVED: {name}" for name in report.common_missing)
+    else:
+        lines.append("  READY")
+    lines.extend(("", "GLOBAL COMMISSIONING ISSUES"))
+    if report.global_blockers:
+        lines.extend(f"  {blocker.value}" for blocker in report.global_blockers)
     else:
         lines.append("  READY")
     return "\n".join(lines)
@@ -529,18 +655,47 @@ def _fact_text(fact: CommissioningFact) -> str:
     return str(fact.value)
 
 
-def _candidate_text(field: CommissioningField) -> str:
-    if not field.candidates:
-        return _fact_text(field.plc_source)
-    rendered = []
-    for item in field.candidates:
-        identity = " / ".join(part for part in (item.address, item.symbol) if part)
-        technical = ", ".join(
-            part for part in (item.data_type, item.native_unit) if part
-        )
-        suffix = f"; {technical}" if technical else ""
-        rendered.append(f"{identity} ({item.role}{suffix})")
-    return "<br>".join(rendered)
+def _candidate_column(field: CommissioningField, attribute: str) -> str:
+    rendered = [
+        f"{value} ({candidate.role})"
+        for candidate in field.candidates
+        if (value := getattr(candidate, attribute)) is not None
+    ]
+    if field.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE:
+        if rendered:
+            return "NOT PRESENT IN CURRENT PLC; related context only: " + "<br>".join(
+                rendered
+            )
+        return "NOT PRESENT IN CURRENT PLC"
+    if rendered:
+        return "<br>".join(rendered)
+    return "UNKNOWN"
+
+
+def _source_confidence(field: CommissioningField) -> str:
+    if field.physical_source_status in {
+        PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE,
+        PhysicalSourceStatus.UNKNOWN,
+    }:
+        return Confidence.UNKNOWN.value.upper()
+    return field.plc_source.confidence.value.upper()
+
+
+def _opcua_discovery_status(field: CommissioningField) -> str:
+    if field.node_id.ready:
+        return "DISCOVERED AND APPROVED"
+    if field.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE:
+        return "NOT APPLICABLE UNTIL SOURCE EXISTS"
+    if field.physical_source_status == PhysicalSourceStatus.UNKNOWN:
+        return "UNKNOWN"
+    return ReadinessBlocker.NEEDS_OPCUA_DISCOVERY.value
+
+
+def _matrix_blockers(readiness: FieldReadiness) -> str:
+    values = [blocker.value for blocker in readiness.blockers]
+    if readiness.source_status != PhysicalSourceStatus.PLC_SOURCE_CONFIRMED:
+        values.insert(0, readiness.source_status.value.upper())
+    return ", ".join(dict.fromkeys(values)) or "NONE"
 
 
 def render_commissioning_matrix(
@@ -553,26 +708,34 @@ def render_commissioning_matrix(
     }
     for field in template.fields:
         readiness = readiness_by_key[(field.equipment, field.field)]
-        missing = ", ".join(blocker.value for blocker in readiness.blockers) or "READY"
+        conversion = _fact_text(field.conversion)
+        if field.contract_kind != "readback" and field.conversion.value is None:
+            conversion = "NOT APPLICABLE"
+        interpretation = _fact_text(field.interpretation)
+        if field.interpretation.value is None:
+            interpretation = (
+                "NOT APPLICABLE"
+                if field.contract_kind == "readback"
+                else "NEEDS VERIFICATION"
+            )
         rows.append(
             "| "
             + " | ".join(
                 (
                     field.equipment.upper(),
                     field.field,
-                    _candidate_text(field),
-                    _fact_text(field.node_id),
-                    _fact_text(field.plc_type),
-                    _fact_text(field.native_unit),
+                    _candidate_column(field, "symbol"),
+                    _candidate_column(field, "raw_symbol"),
+                    _candidate_column(field, "address"),
+                    _candidate_column(field, "data_type"),
+                    _fact_text(field.native_unit) if field.native_unit.value is not None else "UNKNOWN",
                     field.hmi_unit or "NOT APPLICABLE",
-                    _fact_text(field.conversion),
-                    _fact_text(field.interpretation),
-                    min(
-                        (candidate.confidence for candidate in field.candidates),
-                        default=field.plc_source.confidence,
-                        key=lambda confidence: list(Confidence).index(confidence),
-                    ).value.upper(),
-                    missing,
+                    conversion,
+                    interpretation,
+                    _source_confidence(field),
+                    field.physical_source_status.value.upper(),
+                    _opcua_discovery_status(field),
+                    _matrix_blockers(readiness),
                 )
             )
             + " |"
@@ -586,11 +749,33 @@ def render_commissioning_matrix(
             f"- Template purpose: `{template.purpose}`",
             f"- Template status: `{template.status}`",
             f"- Production ready: `{str(report.production_ready).lower()}`",
+            f"- PLC source confirmed: `{report.counts.plc_source_confirmed}`",
+            f"- Partially resolved: `{report.counts.partially_resolved}`",
+            f"- Missing physical source: `{report.counts.missing_physical_source}`",
+            f"- Needs OPC UA discovery: `{report.counts.needs_opcua_discovery}`",
             "- Runtime boundary: `APP_MODE=opcua_readonly` accepts only the independent strict `NodeMap` schema with `purpose=production`.",
             "",
-            "| Equipment | Field | PLC candidate | NodeId | PLC type | Native unit | HMI unit | Conversion | Interpretation | Confidence | Missing |",
-            "|---|---|---|---|---|---|---|---|---|---|---|",
+            "| Equipment | Field | PLC logical candidate | Raw PLC symbol | Physical address | Datatype | Native representation / unit | HMI unit | Conversion state | Semantics | Confidence | Source classification | OPC UA discovery status | Commissioning blockers |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
             *rows,
+            "",
+            "## Confirmed equipment identities",
+            "",
+            "| Application equipment | PLC equipment | Meaning | Confidence | Approval | Provenance |",
+            "|---|---|---|---|---|---|",
+            *(
+                f"| {item.application_equipment} | {item.plc_equipment} | {item.meaning} | {item.confidence.value.upper()} | {'APPROVED' if item.approved else 'UNAPPROVED'} | {item.provenance} |"
+                for item in template.equipment_identities
+            ),
+            "",
+            "## Global commissioning issues",
+            "",
+            "| Issue | Blocker | Affected signals | Resolution | Evidence |",
+            "|---|---|---|---|---|",
+            *(
+                f"| {item.name} | {item.blocker.value} | {', '.join(item.affected_signals)} | {_fact_text(item.resolution)} | {'<br>'.join(item.evidence)} |"
+                for item in template.global_issues
+            ),
             "",
             "## Common OPC UA configuration",
             "",
@@ -610,7 +795,7 @@ def render_commissioning_matrix(
             "- The CFPS voltage-to-power relationship is unresolved and non-linear; no guessed W/V conversion is permitted.",
             "- Raw versus converted IPPS symbols must be selected only after inspecting the CODESYS OPC UA Symbol Configuration and verifying the 750-471 process-image mode.",
             "- Arc aggregation, polarity, latching, recovery, and severity remain unresolved.",
-            "",
+            "- Poor-vacuum physical polarity remains unresolved; current PLC logic must not be changed by this metadata task.",
         )
     )
 

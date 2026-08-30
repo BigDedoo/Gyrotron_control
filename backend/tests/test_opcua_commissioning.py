@@ -7,6 +7,8 @@ from pydantic import ValidationError
 from app.opcua.commissioning import (
     EXPECTED_FIELDS,
     CommissioningTemplateError,
+    Confidence,
+    PhysicalSourceStatus,
     ProductionCommissioningTemplate,
     ReadinessBlocker,
     load_commissioning_template,
@@ -36,25 +38,32 @@ def _field(template, equipment: str, field: str):
     )
 
 
-def _blockers(template, equipment: str, field: str):
-    report = readiness_report(template)
-    return set(
-        next(
-            item.blockers
-            for item in report.fields
-            if item.equipment == equipment and item.field == field
-        )
+def _readiness(template, equipment: str, field: str):
+    return next(
+        item
+        for item in readiness_report(template).fields
+        if item.equipment == equipment and item.field == field
     )
 
 
-def test_template_has_complete_typed_equipment_contract_and_null_node_ids(template):
-    actual = {(item.equipment, item.field): item.logical_signal for item in template.fields}
+def _blockers(template, equipment: str, field: str):
+    return set(_readiness(template, equipment, field).blockers)
 
+
+def test_template_has_complete_contract_null_node_ids_and_derived_counts(template):
+    actual = {(item.equipment, item.field): item.logical_signal for item in template.fields}
+    report = readiness_report(template)
+
+    assert template.schema_version == 2
     assert template.purpose == "production-template"
     assert template.status == "incomplete"
     assert actual == EXPECTED_FIELDS
     assert len(template.fields) == 24
     assert all(item.node_id.value is None for item in template.fields)
+    assert report.counts.plc_source_confirmed == 12
+    assert report.counts.partially_resolved == 4
+    assert report.counts.missing_physical_source == 8
+    assert report.counts.needs_opcua_discovery == 16
 
 
 def test_commissioning_template_is_not_a_runtime_node_map(template):
@@ -101,125 +110,223 @@ def test_testonly_node_ids_are_rejected_by_template_and_runtime(tmp_path: Path):
         load_node_map(path)
 
 
-def test_readiness_report_is_fail_closed_and_cli_validate_is_nonzero(template, capsys):
+def test_report_remains_fail_closed_and_cli_validate_is_nonzero(template, capsys):
     report = readiness_report(template)
 
     assert report.production_ready is False
-    assert set(report.common_missing) == {
-        "endpoint",
-        "namespace_indexes",
-        "namespace_uris",
-        "node_id_style",
-        "security_policy",
-        "trusted_server_certificate_identity",
-        "authentication_method",
-        "dedicated_read_only_account",
-        "source_timestamp_behavior",
-        "engineering_unit_metadata",
+    assert len(report.common_missing) == 10
+    assert set(report.global_blockers) == {
+        ReadinessBlocker.NEEDS_750_471_CONFIGURATION,
+        ReadinessBlocker.NEEDS_POLARITY_VERIFICATION,
     }
     assert main(["validate", str(TEMPLATE_PATH)]) == 1
     assert "production_ready = false" in capsys.readouterr().out
     assert main(["report", str(TEMPLATE_PATH)]) == 0
 
 
-def test_required_readiness_checks_cannot_be_deleted_to_fake_ready():
+def test_missing_source_classification_is_itself_a_production_readiness_gate(template):
+    report = readiness_report(template)
+    missing = [
+        field
+        for field in report.fields
+        if field.source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
+    ]
+
+    assert len(missing) == 8
+    assert all(not field.blockers for field in missing)
+    assert report.production_ready is False
+
+
+def test_required_readiness_and_global_checks_cannot_be_deleted():
     payload = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
     payload["fields"][0]["requirements"] = []
-
     with pytest.raises(ValidationError, match="authoritative software contract"):
         ProductionCommissioningTemplate.model_validate(payload)
 
+    payload = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+    payload["global_issues"] = []
+    with pytest.raises(ValidationError, match="global commissioning issues"):
+        ProductionCommissioningTemplate.model_validate(payload)
 
-def test_readiness_identifies_required_equipment_blockers(template):
-    assert ReadinessBlocker.NEEDS_NODE_ID in _blockers(template, "cmps", "state")
+
+def test_controller_and_hvps_identities_are_confirmed_without_versions(template):
+    assert template.controller.vendor.value == "WAGO"
+    assert template.controller.model.value == "PFC200 750-8210"
+    assert template.controller.runtime.value == "CODESYS-based"
+    assert template.controller.runtime_version.value is None
+    assert template.controller.opcua_server_version.value is None
     assert {
-        ReadinessBlocker.BLOCKED_BY_PHYSICAL_SOURCE,
-        ReadinessBlocker.NEEDS_NODE_ID,
-        ReadinessBlocker.NEEDS_TYPE,
-        ReadinessBlocker.NEEDS_CONVERSION,
-        ReadinessBlocker.NEEDS_RANGE,
-    }.issubset(_blockers(template, "cmps", "current"))
-    assert ReadinessBlocker.NEEDS_CONVERSION in _blockers(template, "cfps", "power")
-    assert ReadinessBlocker.NEEDS_RANGE in _blockers(template, "cfps", "power")
-    assert {
-        ReadinessBlocker.NEEDS_SIGNAL_SELECTION,
-        ReadinessBlocker.NEEDS_POLARITY,
-        ReadinessBlocker.NEEDS_INTERPRETATION,
-    }.issubset(_blockers(template, "arc_detector", "state"))
-    assert ReadinessBlocker.BLOCKED_BY_PHYSICAL_SOURCE in _blockers(
-        template, "ahvps", "voltage"
+        (item.application_equipment, item.plc_equipment, item.meaning)
+        for item in template.equipment_identities
+    } == {
+        ("AHVPS", "APS", "Anode Power Supply"),
+        ("CHVPS", "CPS", "Cathode Power Supply"),
+    }
+    assert all(item.confidence == Confidence.CONFIRMED for item in template.equipment_identities)
+
+
+def test_cmps_sources_and_missing_actual_current_are_classified(template):
+    state = _field(template, "cmps", "state")
+    current = _field(template, "cmps", "current")
+    authorization = _field(template, "cmps", "interlock")
+
+    assert state.physical_source_status == PhysicalSourceStatus.PLC_SOURCE_CONFIRMED
+    assert state.plc_source.value == "gIntS_Inp.CMPS_On"
+    assert state.candidates[0].raw_symbol == "di_IntS_CMPS_On_Raw"
+    assert _blockers(template, "cmps", "state") == {
+        ReadinessBlocker.NEEDS_OPCUA_DISCOVERY
+    }
+    assert current.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
+    assert current.plc_source.value is None
+    assert not _blockers(template, "cmps", "current")
+    assert authorization.plc_source.value == "gIntS_Outp.Auth_CMPS"
+    assert "not independent equipment feedback" in authorization.candidates[0].role
+
+
+def test_cfps_evidence_keeps_power_missing_and_feedback_partial(template):
+    state = _field(template, "cfps", "state")
+    power = _field(template, "cfps", "power")
+    feedback = _field(template, "cfps", "feedback")
+    authorization = _field(template, "cfps", "interlock")
+
+    assert state.physical_source_status == PhysicalSourceStatus.PLC_SOURCE_CONFIRMED
+    assert power.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
+    iw33 = next(item for item in power.candidates if item.address == "%IW33")
+    assert "FORBIDDEN" in iw33.note
+    assert "70 W/V" in " ".join(power.notes)
+    assert feedback.physical_source_status == PhysicalSourceStatus.NEEDS_CONTROLS_VERIFICATION
+    assert feedback.plc_source.value == "filamentData.Sts_Run"
+    assert feedback.plc_source.confidence == Confidence.STRONGLY_INFERRED
+    stabilization = next(item for item in feedback.candidates if item.address == "%IX52.4")
+    assert "low means stabilization active" in stabilization.note
+    assert "unverified" in stabilization.note
+    assert authorization.plc_source.value == "gIntS_Outp.Auth_CFPS"
+    assert "WaterFlow AND IPPS_On AND PoorVacuum_OK" in authorization.interpretation.provenance
+    assert "CMPS" not in authorization.interpretation.provenance
+
+
+@pytest.mark.parametrize(
+    ("field_name", "raw_address", "raw_symbol", "processed_symbol"),
+    (
+        ("voltage", "%IW27", "ai_IonPumpVoltage_Raw", "ippsData.Meas_Voltage_kV"),
+        ("current", "%IW28", "ai_IonPumpCurrent_Raw", "ippsData.Meas_Current_mA"),
+    ),
+)
+def test_ipps_measurements_confirm_sources_but_keep_export_and_module_blockers(
+    template, field_name, raw_address, raw_symbol, processed_symbol
+):
+    field = _field(template, "ipps", field_name)
+    blockers = _blockers(template, "ipps", field_name)
+
+    assert field.physical_source_status == PhysicalSourceStatus.PLC_SOURCE_CONFIRMED
+    assert {(item.address, item.symbol) for item in field.candidates} == {
+        (raw_address, raw_symbol),
+        (None, processed_symbol),
+    }
+    assert ReadinessBlocker.NEEDS_750_471_CONFIGURATION in blockers
+    assert ReadinessBlocker.NEEDS_EXPORTED_SYMBOL_SELECTION in blockers
+    assert ReadinessBlocker.NEEDS_RANGE_APPROVAL in blockers
+    assert ReadinessBlocker.NEEDS_OPCUA_DISCOVERY in blockers
+
+
+def test_ipps_state_authorization_and_hv_active_warning_are_preserved(template):
+    state = _field(template, "ipps", "state")
+    authorization = _field(template, "ipps", "interlock")
+
+    assert state.plc_source.value == "ippsData.Sts_On / gIntS_Inp.IPPS_On"
+    assert "supplies FALSE" in " ".join(state.notes)
+    assert "not production feedback" in " ".join(state.notes)
+    assert authorization.plc_source.value == "gIntS_Outp.Auth_IPPS"
+    assert "DoorsClosed" in authorization.interpretation.provenance
+
+
+def test_arc_polarities_are_confirmed_but_aggregate_remains_unresolved(template):
+    arc = _field(template, "arc_detector", "state")
+    roles = {item.address: item.role for item in arc.candidates}
+    blockers = _blockers(template, "arc_detector", "state")
+
+    assert "raw TRUE = healthy/OK" in roles["%IX50.4"]
+    assert "raw FALSE = healthy/OK" in roles["%IX50.5"]
+    assert "explicitly inverts" in next(
+        item.note for item in arc.candidates if item.address == "%IX50.5"
     )
-    assert ReadinessBlocker.BLOCKED_BY_PHYSICAL_SOURCE in _blockers(
-        template, "chvps", "voltage"
+    assert arc.physical_source_status == PhysicalSourceStatus.NEEDS_CONTROLS_VERIFICATION
+    assert arc.signal_selection.value is None
+    assert arc.aggregation.value is None
+    assert ReadinessBlocker.NEEDS_SIGNAL_SELECTION in blockers
+    assert ReadinessBlocker.NEEDS_AGGREGATION in blockers
+    assert ReadinessBlocker.NEEDS_SEVERITY_APPROVAL in blockers
+
+
+@pytest.mark.parametrize(
+    ("equipment", "plc_prefix", "state_symbol", "state_address", "setpoint", "fault"),
+    (
+        ("ahvps", "APS", "gIntS_Inp.APS_On", "%IX50.1", "%QW27", "PLC_PRG.fbAPS.StatusFault"),
+        ("chvps", "CPS", "gIntS_Inp.CPS_On", "%IX50.0", "%QW24", "PLC_PRG.fbCPS.StatusFault"),
+    ),
+)
+def test_hvps_state_is_confirmed_voltage_missing_and_protection_partial(
+    template, equipment, plc_prefix, state_symbol, state_address, setpoint, fault
+):
+    state = _field(template, equipment, "state")
+    voltage = _field(template, equipment, "voltage")
+    protection = _field(template, equipment, "protection")
+    authorization = _field(template, equipment, "interlock")
+
+    assert state.physical_source_status == PhysicalSourceStatus.PLC_SOURCE_CONFIRMED
+    assert state.plc_source.value == state_symbol
+    assert state.candidates[0].address == state_address
+    assert voltage.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
+    output = next(item for item in voltage.candidates if item.address == setpoint)
+    assert "SETPOINT" in output.role
+    assert "FORBIDDEN" in output.note
+    assert protection.physical_source_status == PhysicalSourceStatus.NEEDS_CONTROLS_VERIFICATION
+    assert protection.plc_source.value == fault
+    assert protection.plc_source.confidence == Confidence.STRONGLY_INFERRED
+    assert ReadinessBlocker.NEEDS_CURRENT_FB_VERIFICATION in _blockers(
+        template, equipment, "protection"
     )
-    for field in ("state", "feedback", "pulse_length", "pulse_period"):
-        assert ReadinessBlocker.BLOCKED_BY_PHYSICAL_SOURCE in _blockers(
-            template, "pulse_generator", field
+    assert authorization.plc_source.value == f"gIntS_Outp.Auth_{plc_prefix}"
+
+
+def test_all_pulse_generator_fields_are_missing_and_preset_is_forbidden(template):
+    for field_name in ("state", "feedback", "pulse_length", "pulse_period"):
+        field = _field(template, "pulse_generator", field_name)
+        assert field.physical_source_status == PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
+        assert _readiness(template, "pulse_generator", field_name).source_status == (
+            PhysicalSourceStatus.MISSING_PHYSICAL_SOURCE
         )
 
-
-def test_recovered_candidates_and_unresolved_decisions_are_preserved(template):
-    cmps_state = _field(template, "cmps", "state")
-    assert cmps_state.candidates[0].address == "%IX49.3"
-    assert cmps_state.candidates[0].symbol == "di_IntS_CMPS_On_Raw"
-    assert cmps_state.interpretation.approved is False
-
-    cfps_power = _field(template, "cfps", "power")
-    assert cfps_power.candidates[0].address == "%IW33"
-    assert "non-linear" in cfps_power.conversion.provenance
-    assert cfps_power.conversion.value is None
-
-    ipps_voltage = _field(template, "ipps", "voltage")
-    ipps_current = _field(template, "ipps", "current")
-    assert {item.address for item in ipps_voltage.candidates} == {"%IW27", None}
-    assert {item.symbol for item in ipps_voltage.candidates} == {
-        None,
-        "Meas_Voltage_kV",
-    }
-    assert {item.address for item in ipps_current.candidates} == {"%IW28", None}
-    assert {item.symbol for item in ipps_current.candidates} == {
-        None,
-        "Meas_Current_mA",
-    }
-    assert ipps_voltage.signal_selection.value is None
-    assert ipps_current.signal_selection.value is None
+    pulse_length = _field(template, "pulse_generator", "pulse_length")
+    preset = next(item for item in pulse_length.candidates if item.address == "%QW26")
+    assert "PRESET" in preset.role
+    assert "FORBIDDEN" in preset.note
 
 
-def test_setpoint_outputs_are_explicitly_forbidden_as_actual_readbacks(template):
-    expected = {
-        ("ahvps", "voltage"): "%QW27",
-        ("chvps", "voltage"): "%QW24",
-        ("pulse_generator", "pulse_length"): "%QW26",
-    }
-    for key, address in expected.items():
-        field = _field(template, *key)
-        candidate = next(item for item in field.candidates if item.address == address)
-        assert "FORBIDDEN" in candidate.note
-        assert "setpoint" in candidate.role.lower() or "preset" in candidate.role.lower()
-        assert field.node_id.value is None
+def test_global_750_471_and_poor_vacuum_issues_are_explicit(template):
+    issues = {item.name: item for item in template.global_issues}
+    module = issues["750_471_parameterization"]
+    vacuum = issues["poor_vacuum_polarity"]
+
+    assert module.blocker == ReadinessBlocker.NEEDS_750_471_CONFIGURATION
+    evidence = " ".join(module.evidence)
+    for address in ("%IW27", "%IW28", "%IW29", "%IW30", "%IW31", "%IW32", "%IW33", "%IW34"):
+        assert address in evidence
+    assert "not production-approved" in evidence
+    assert vacuum.blocker == ReadinessBlocker.NEEDS_POLARITY_VERIFICATION
+    assert "PoorVacuum_OK := di_IntS_PoorVacuum_Raw" in " ".join(vacuum.evidence)
 
 
-def test_arc_candidates_keep_polarity_and_aggregation_unresolved(template):
-    arc = _field(template, "arc_detector", "state")
-    assert {item.address for item in arc.candidates} == {
-        "%IX50.4",
-        "%IX50.5",
-        "%IX51.1",
-        "%IX52.3",
-    }
-    assert arc.polarity.value is None
-    assert arc.aggregation.value is None
-    assert arc.latching.value is None
-    assert arc.recovery.value is None
-    assert arc.severity.value is None
-
-
-def test_commissioning_matrix_is_generated_from_the_template(template):
+def test_matrix_is_generated_from_template_with_refined_columns(template):
     rendered = render_commissioning_matrix(template).strip()
     committed = MATRIX_PATH.read_text(encoding="utf-8").strip()
 
     assert committed == rendered
     assert "THIS IS NOT A PRODUCTION NODE MAP" in committed
+    assert "PLC logical candidate" in committed
+    assert "Raw PLC symbol" in committed
+    assert "OPC UA discovery status" in committed
+    assert "PLC source confirmed: `12`" in committed
     assert committed.count("\n| ") >= len(template.fields)
 
 

@@ -1,261 +1,304 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "purpose": "production-template",
   "status": "incomplete",
-  "warning": "COMMISSIONING PREPARATION ONLY. This file is not a runtime production NodeMap and must never be used by APP_MODE=opcua_readonly.",
+  "warning": "NON-RUNNABLE commissioning evidence only. Do not use this file as an APP_MODE=opcua_readonly node map.",
   "controller": {
-    "vendor": {"value": "WAGO", "confidence": "confirmed", "provenance": "Recovered project controller documentation."},
-    "model": {"value": "PFC200 750-8210", "confidence": "confirmed", "provenance": "Recovered project controller documentation."},
-    "runtime": {"value": "CODESYS-based", "confidence": "confirmed", "provenance": "Recovered project controller documentation."}
+    "vendor": {"value": "WAGO", "confidence": "confirmed", "approved": true, "provenance": "Current offline PLC and wiring evidence."},
+    "model": {"value": "PFC200 750-8210", "confidence": "confirmed", "approved": true, "provenance": "Current offline PLC and wiring evidence."},
+    "runtime": {"value": "CODESYS-based", "confidence": "confirmed", "approved": true, "provenance": "Current offline PLC project evidence."},
+    "runtime_version": {"value": null, "confidence": "unknown", "provenance": "Exact current runtime version has not been recovered."},
+    "opcua_server_version": {"value": null, "confidence": "unknown", "provenance": "Exact current OPC UA server version has not been recovered."}
   },
+  "equipment_identities": [
+    {"application_equipment": "AHVPS", "plc_equipment": "APS", "meaning": "Anode Power Supply", "confidence": "confirmed", "approved": true, "provenance": "Current offline PLC and equipment evidence establishes APS as the anode supply."},
+    {"application_equipment": "CHVPS", "plc_equipment": "CPS", "meaning": "Cathode Power Supply", "confidence": "confirmed", "approved": true, "provenance": "Current offline PLC and equipment evidence establishes CPS as the cathode supply."}
+  ],
+  "global_issues": [
+    {
+      "name": "750_471_parameterization",
+      "blocker": "NEEDS_750_471_CONFIGURATION",
+      "affected_signals": ["ipps.voltage", "ipps.current", "cfps.power"],
+      "resolution": {"value": null, "confidence": "unknown", "provenance": "Parameter pages for both installed 750-471 modules have not been recovered."},
+      "evidence": [
+        "750-471 #1 process-image WORD addresses are confirmed as %IW27, %IW28, %IW29 and %IW30.",
+        "750-471 #2 process-image WORD addresses are confirmed as %IW31, %IW32, %IW33 and %IW34.",
+        "Input mode, raw representation, status/control format, filter, signedness and exact 0..10 V representation remain unresolved.",
+        "raw / 32767 * 10 is not production-approved without the parameter pages."
+      ]
+    },
+    {
+      "name": "poor_vacuum_polarity",
+      "blocker": "NEEDS_POLARITY_VERIFICATION",
+      "affected_signals": ["interlock.cfps"],
+      "resolution": {"value": null, "confidence": "unknown", "provenance": "Offline equipment and PLC evidence conflict on the physical contact polarity."},
+      "evidence": [
+        "Equipment documentation says the bad-vacuum contact closes on fault.",
+        "Current PLC logic assigns PoorVacuum_OK := di_IntS_PoorVacuum_Raw.",
+        "Do not change PLC logic or silently resolve this conflict during metadata commissioning."
+      ]
+    }
+  ],
   "common_opcua": [
     {"name": "endpoint", "fact": {"value": null, "confidence": "unknown", "provenance": "Production endpoint has not been approved.", "note": "Do not browse or infer the endpoint."}},
-    {"name": "namespace_indexes", "fact": {"value": null, "confidence": "unknown", "provenance": "CODESYS OPC UA namespace table has not been inspected."}},
-    {"name": "namespace_uris", "fact": {"value": null, "confidence": "unknown", "provenance": "CODESYS OPC UA namespace table has not been inspected."}},
+    {"name": "namespace_indexes", "fact": {"value": null, "confidence": "unknown", "provenance": "CODESYS OPC UA Symbol Configuration has not been obtained."}},
+    {"name": "namespace_uris", "fact": {"value": null, "confidence": "unknown", "provenance": "CODESYS OPC UA Symbol Configuration has not been obtained."}},
     {"name": "node_id_style", "fact": {"value": null, "confidence": "unknown", "provenance": "Production identifier representation is unknown."}},
-    {"name": "security_policy", "fact": {"value": null, "confidence": "unknown", "provenance": "Controls-engineering approval is required.", "note": "Non-local production OPC UA must use SignAndEncrypt; no final SecurityPolicy is selected here."}},
-    {"name": "trusted_server_certificate_identity", "fact": {"value": null, "confidence": "unknown", "provenance": "Trusted server identity has not been supplied."}},
+    {"name": "security_policy", "fact": {"value": null, "confidence": "unknown", "provenance": "Controls engineering has not approved a PLC-enabled SecurityPolicy.", "note": "Non-local production OPC UA must use SignAndEncrypt."}},
+    {"name": "trusted_server_certificate_identity", "fact": {"value": null, "confidence": "unknown", "provenance": "Trusted PLC server identity has not been supplied."}},
     {"name": "authentication_method", "fact": {"value": null, "confidence": "unknown", "provenance": "Production authentication method is unapproved."}},
     {"name": "dedicated_read_only_account", "fact": {"value": null, "confidence": "unknown", "provenance": "Dedicated read-only account has not been provisioned."}},
-    {"name": "source_timestamp_behavior", "fact": {"value": null, "confidence": "unknown", "provenance": "PLC SourceTimestamp behavior must be verified during localhost/offline commissioning."}},
-    {"name": "engineering_unit_metadata", "fact": {"value": null, "confidence": "unknown", "provenance": "Availability and authority of OPC UA engineering-unit metadata is unknown."}}
+    {"name": "source_timestamp_behavior", "fact": {"value": null, "confidence": "unknown", "provenance": "PLC SourceTimestamp behavior has not been verified."}},
+    {"name": "engineering_unit_metadata", "fact": {"value": null, "confidence": "unknown", "provenance": "Authority and availability of server engineering-unit metadata is unknown."}}
   ],
   "fields": [
     {
       "equipment": "cmps", "field": "state", "logical_signal": "cmps.state", "contract_kind": "state", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%IX49.3 / di_IntS_CMPS_On_Raw", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "on", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Current program semantics.", "note": "Only TRUE = ON is inferred; FALSE semantics require commissioning verification."},
-      "candidates": [{"address": "%IX49.3", "symbol": "di_IntS_CMPS_On_Raw", "data_type": "BOOL", "role": "CMPS on-state input", "confidence": "strongly_inferred", "note": "TRUE appears to mean CMPS ON; not production-approved."}]
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Inp.CMPS_On", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS application mapping."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = CMPS ON; FALSE = CMPS OFF", "confidence": "confirmed", "approved": true, "provenance": "Current PLC semantics."},
+      "candidates": [{"address": "%IX49.3", "symbol": "gIntS_Inp.CMPS_On", "raw_symbol": "di_IntS_CMPS_On_Raw", "data_type": "BOOL", "role": "Current CMPS state source", "confidence": "confirmed", "note": "PLC source confirmed; production NodeId still requires discovery."}]
     },
     {
       "equipment": "cmps", "field": "current", "logical_signal": "cmps.current", "contract_kind": "readback", "hmi_unit": "A",
-      "physical_source_status": "not_recovered", "requirements": ["node_id", "type", "conversion", "range"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "No current CODESYS actual-current source has been recovered."},
-      "notes": ["Cryomagnet current exists as a historical machine concept (Icryomagnet), but no current production CODESYS actual-current variable is known.", "Historical <65 A operating information is reference context only and is not an approved mapping range."]
+      "physical_source_status": "missing_physical_source", "requirements": ["node_id", "type", "conversion", "range"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "No current PLC current/readback source exists in the transmitted CODESYS application."},
+      "notes": ["Historical OCS acquired cryomagnet current, but the current CODESYS application does not provide it.", "Historical Icryomagnet and <65 A references do not establish a current PLC source or approved range."]
     },
     {
       "equipment": "cmps", "field": "interlock", "logical_signal": "interlock.cmps", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation", "polarity"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%QX57.1 / do_IntS_Auth_CMPS_Raw", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "ok", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Authorization output naming.", "note": "Only TRUE = authorization granted is inferred; FALSE semantics require verification."},
-      "polarity": {"value": "TRUE = authorization granted", "confidence": "strongly_inferred", "provenance": "Authorization output naming."},
-      "candidates": [{"address": "%QX57.1", "symbol": "do_IntS_Auth_CMPS_Raw", "data_type": "BOOL", "role": "CMPS authorization/interlock condition", "confidence": "strongly_inferred", "note": "Output is an authorization candidate, not a confirmed physical interlock feedback."}]
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation", "polarity"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Outp.Auth_CMPS", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS authorization output."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = PLC authorization granted; FALSE = authorization withheld", "confidence": "confirmed", "approved": true, "provenance": "Current PLC logic."},
+      "polarity": {"value": "Active-high PLC authorization output", "confidence": "confirmed", "approved": true, "provenance": "Current PLC logic."},
+      "candidates": [{"address": "%QX57.1", "symbol": "gIntS_Outp.Auth_CMPS", "raw_symbol": "do_IntS_Auth_CMPS_Raw", "data_type": "BOOL", "role": "PLC authorization/interlock output, not independent equipment feedback", "confidence": "confirmed", "note": "Production NodeId still requires discovery."}]
     },
-
     {
       "equipment": "cfps", "field": "state", "logical_signal": "cfps.state", "contract_kind": "state", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%IX49.6 / di_IntS_CFPS_On_Raw", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "on", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Current program semantics.", "note": "Only TRUE = ON is inferred; FALSE semantics require commissioning verification."},
-      "candidates": [{"address": "%IX49.6", "symbol": "di_IntS_CFPS_On_Raw", "data_type": "BOOL", "role": "CFPS on-state input", "confidence": "strongly_inferred", "note": "TRUE appears to mean CFPS ON."}]
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Inp.CFPS_On", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS application mapping."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = CFPS ON; FALSE = CFPS OFF", "confidence": "confirmed", "approved": true, "provenance": "Current PLC semantics."},
+      "candidates": [{"address": "%IX49.6", "symbol": "gIntS_Inp.CFPS_On", "raw_symbol": "di_IntS_CFPS_On_Raw", "data_type": "BOOL", "role": "Current CFPS state source", "confidence": "confirmed", "note": "PLC source confirmed; production NodeId still requires discovery."}]
     },
     {
       "equipment": "cfps", "field": "power", "logical_signal": "cfps.power", "contract_kind": "readback", "hmi_unit": "W",
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "conversion", "range"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%IW33 / Fb_FilamentPower_V", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "WORD raw / REAL after PLC conversion", "confidence": "strongly_inferred", "provenance": "Recovered CODESYS conversion chain."},
-      "native_unit": {"value": "feedback voltage (V)", "confidence": "strongly_inferred", "provenance": "Recovered CODESYS signal naming and conversion chain."},
-      "conversion": {"value": null, "confidence": "unknown", "provenance": "Voltage-to-power calibration is unresolved and non-linear.", "note": "Do not use 70 W/V or another guessed linear conversion."},
-      "engineering_range": {"value": null, "confidence": "unknown", "provenance": "Approved physical range is unavailable."},
-      "candidates": [{"address": "%IW33", "symbol": "Fb_FilamentPower_V", "data_type": "WORD raw / REAL converted", "native_unit": "V", "role": "CFPS feedback-voltage candidate", "confidence": "strongly_inferred", "note": "PLC conversion is approximately raw / 32767 * 10, subject to verification of the actual 750-471 channel/process-image configuration. V to W is unresolved and non-linear."}],
-      "notes": ["This candidate is voltage feedback, not an authoritative power value in W."]
+      "physical_source_status": "missing_physical_source", "requirements": ["node_id", "type", "conversion", "range"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "No authoritative actual-power measurement in W exists in the current PLC application."},
+      "candidates": [{"address": "%IW33", "symbol": "Fb_FilamentPower_V", "raw_symbol": null, "data_type": "WORD raw / REAL processed", "native_unit": "V", "role": "Pf command/control feedback voltage; commissioning context only", "confidence": "confirmed", "note": "FORBIDDEN as direct cfps.power actual W readback."}],
+      "notes": ["%IW33 exists and is useful commissioning evidence, but it is feedback of the Pf command/control signal in volts, not authoritative actual power in W.", "The command-to-real-power relationship is non-linear; V to W calibration remains unresolved.", "No 70 W/V conversion is permitted."]
     },
     {
       "equipment": "cfps", "field": "feedback", "logical_signal": "cfps.feedback", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%IX52.5 / di_CFPS_RunFb_Raw", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "ok", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Run-feedback naming.", "note": "Only TRUE = supply running is inferred; FALSE semantics require verification."},
+      "physical_source_status": "needs_controls_verification", "requirements": ["node_id", "type", "interpretation"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "filamentData.Sts_Run", "confidence": "strongly_inferred", "approved": false, "provenance": "Strongest current candidate for the generic application feedback field."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current PLC input type."},
+      "interpretation": {"value": "TRUE likely means CFPS / IIPT running", "confidence": "strongly_inferred", "approved": false, "provenance": "Current offline application evidence; HMI-field selection still needs controls verification."},
       "candidates": [
-        {"address": "%IX52.5", "symbol": "di_CFPS_RunFb_Raw", "data_type": "BOOL", "role": "Primary generic CFPS run feedback candidate", "confidence": "strongly_inferred", "note": "Do not approve until behavior is verified."},
-        {"address": "%IX52.4", "symbol": null, "data_type": "BOOL", "role": "Stabilization feedback context", "confidence": "strongly_inferred", "note": "Do not automatically map this to generic CFPS feedback."}
-      ]
+        {"address": "%IX52.5", "symbol": "filamentData.Sts_Run", "raw_symbol": "di_CFPS_RunFb_Raw", "data_type": "BOOL", "role": "Primary generic CFPS run-feedback candidate", "confidence": "strongly_inferred", "note": "Do not promote to confirmed HMI selection until controls verification."},
+        {"address": "%IX52.4", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "Stabilization feedback context only", "confidence": "confirmed", "note": "Equipment documentation says DI0 low means stabilization active, while current PLC consumes the input directly; external inversion is possible but unverified."}
+      ],
+      "notes": ["Stabilization polarity is NEEDS_CONTROLS_VERIFICATION; do not change current PLC runtime logic."]
     },
     {
       "equipment": "cfps", "field": "interlock", "logical_signal": "interlock.cfps", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation", "polarity"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%QX58.3 / do_IntS_Auth_CFPS_Raw", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "ok", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Authorization output naming.", "note": "FALSE semantics require commissioning verification."},
-      "polarity": {"value": "TRUE = authorization granted", "confidence": "strongly_inferred", "provenance": "Authorization output naming."},
-      "candidates": [{"address": "%QX58.3", "symbol": "do_IntS_Auth_CFPS_Raw", "data_type": "BOOL", "role": "CFPS authorization/interlock condition", "confidence": "strongly_inferred", "note": "Candidate only."}]
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation", "polarity"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Outp.Auth_CFPS", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS authorization output."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = authorization granted; FALSE = authorization withheld", "confidence": "confirmed", "approved": true, "provenance": "Current logic is WaterFlow AND IPPS_On AND PoorVacuum_OK."},
+      "polarity": {"value": "Active-high PLC authorization output", "confidence": "confirmed", "approved": true, "provenance": "Current PLC logic."},
+      "candidates": [{"address": "%QX58.3", "symbol": "gIntS_Outp.Auth_CFPS", "raw_symbol": "do_IntS_Auth_CFPS_Raw", "data_type": "BOOL", "role": "Current CFPS authorization output", "confidence": "confirmed", "note": "No obsolete CMPS dependency is included."}],
+      "notes": ["PoorVacuum physical polarity remains a separate NEEDS_POLARITY_VERIFICATION global issue."]
     },
-
     {
       "equipment": "ipps", "field": "state", "logical_signal": "ipps.state", "contract_kind": "state", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%IX49.4 / di_IntS_IPPS_On_Raw", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "on", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Current program semantics.", "note": "Only TRUE = ON is inferred; FALSE semantics require commissioning verification."},
-      "candidates": [{"address": "%IX49.4", "symbol": "di_IntS_IPPS_On_Raw", "data_type": "BOOL", "role": "IPPS on-state input", "confidence": "strongly_inferred", "note": "Candidate TRUE = IPPS ON."}]
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "ippsData.Sts_On / gIntS_Inp.IPPS_On", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS application mapping."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = IPPS ON; FALSE = IPPS OFF", "confidence": "confirmed", "approved": true, "provenance": "Current PLC semantics."},
+      "candidates": [{"address": "%IX49.4", "symbol": "ippsData.Sts_On / gIntS_Inp.IPPS_On", "raw_symbol": "di_IntS_IPPS_On_Raw", "data_type": "BOOL", "role": "Current IPPS state source", "confidence": "confirmed", "note": "Production NodeId still requires discovery."}],
+      "notes": ["Historical/physical IPPS HV-active feedback exists, but the current PLC has no mapped actual source and supplies FALSE to relevant logic; that placeholder is not production feedback."]
     },
     {
       "equipment": "ipps", "field": "voltage", "logical_signal": "ipps.voltage", "contract_kind": "readback", "hmi_unit": "V",
-      "physical_source_status": "selection_unresolved", "requirements": ["node_id", "type", "conversion", "range", "signal_selection"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "CODESYS OPC UA Symbol Configuration not inspected."},
-      "conversion": {"value": "Converted candidate would require kV x 1000 -> V; raw WORD conversion remains channel-mode dependent", "confidence": "strongly_inferred", "provenance": "Recovered sensor and CODESYS engineering-unit information.", "note": "Not approved until the exported symbol and 750-471 process-image mode are verified."},
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "conversion", "range", "exported_symbol_selection", "process_image_configuration"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "ai_IonPumpVoltage_Raw / ippsData.Meas_Voltage_kV", "confidence": "confirmed", "approved": true, "provenance": "Current raw and processed PLC sources are identified."},
+      "plc_type": {"value": "WORD raw / REAL processed", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declarations."},
+      "native_unit": {"value": "raw process image / kV", "confidence": "confirmed", "approved": true, "provenance": "Processed PLC representation is kV."},
+      "conversion": {"value": "Processed REAL kV x 1000 = HMI V; raw conversion awaits 750-471 parameterization", "confidence": "confirmed", "approved": true, "provenance": "Physical relationship is 1 V instrumentation = 1 kV; raw representation is unresolved."},
+      "engineering_range": {"value": null, "confidence": "unknown", "provenance": "Approved operating range has not been supplied."},
+      "exported_symbol_selection": {"value": null, "confidence": "unknown", "provenance": "Raw WORD versus processed REAL OPC UA export is not selected."},
+      "process_image_configuration": {"value": null, "confidence": "unknown", "provenance": "Actual 750-471 process-image mode is unavailable."},
       "candidates": [
-        {"address": "%IW27", "symbol": null, "data_type": "WORD", "native_unit": "raw process image", "role": "Raw IPPS voltage source candidate", "confidence": "strongly_inferred", "note": "Raw conversion depends on verified 750-471 channel/process-image mode."},
-        {"address": null, "symbol": "Meas_Voltage_kV", "data_type": "REAL", "native_unit": "kV", "role": "Converted IPPS voltage source candidate", "confidence": "strongly_inferred", "note": "Physical relationship is 1 V instrumentation = 1 kV; exported OPC UA symbol is TBD."}
-      ],
-      "notes": ["Do not select raw WORD versus converted REAL until the OPC UA Symbol Configuration is known."]
+        {"address": "%IW27", "symbol": "ai_IonPumpVoltage_Raw", "raw_symbol": null, "data_type": "WORD", "native_unit": "raw process image", "role": "Confirmed raw PLC source", "confidence": "confirmed", "note": "Do not finalize scaling without the 750-471 parameter page."},
+        {"address": null, "symbol": "ippsData.Meas_Voltage_kV", "raw_symbol": null, "data_type": "REAL", "native_unit": "kV", "role": "Confirmed processed PLC candidate", "confidence": "confirmed", "note": "OPC UA export status is unknown."}
+      ]
     },
     {
       "equipment": "ipps", "field": "current", "logical_signal": "ipps.current", "contract_kind": "readback", "hmi_unit": "A",
-      "physical_source_status": "selection_unresolved", "requirements": ["node_id", "type", "conversion", "range", "signal_selection"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "CODESYS OPC UA Symbol Configuration not inspected."},
-      "conversion": {"value": "Converted candidate would require mA / 1000 -> A; raw WORD conversion remains channel-mode dependent", "confidence": "strongly_inferred", "provenance": "Recovered sensor and CODESYS engineering-unit information.", "note": "Not approved until the exported symbol and 750-471 process-image mode are verified."},
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "conversion", "range", "exported_symbol_selection", "process_image_configuration"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "ai_IonPumpCurrent_Raw / ippsData.Meas_Current_mA", "confidence": "confirmed", "approved": true, "provenance": "Current raw and processed PLC sources are identified."},
+      "plc_type": {"value": "WORD raw / REAL processed", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declarations."},
+      "native_unit": {"value": "raw process image / mA", "confidence": "confirmed", "approved": true, "provenance": "Processed PLC representation is mA."},
+      "conversion": {"value": "Processed REAL mA / 1000 = HMI A; raw conversion awaits 750-471 parameterization", "confidence": "confirmed", "approved": true, "provenance": "Physical relationship is 1 V instrumentation = 1 mA; raw representation is unresolved."},
+      "engineering_range": {"value": null, "confidence": "unknown", "provenance": "Approved operating range has not been supplied."},
+      "exported_symbol_selection": {"value": null, "confidence": "unknown", "provenance": "Raw WORD versus processed REAL OPC UA export is not selected."},
+      "process_image_configuration": {"value": null, "confidence": "unknown", "provenance": "Actual 750-471 process-image mode is unavailable."},
       "candidates": [
-        {"address": "%IW28", "symbol": null, "data_type": "WORD", "native_unit": "raw process image", "role": "Raw IPPS current source candidate", "confidence": "strongly_inferred", "note": "Raw conversion depends on verified 750-471 channel/process-image mode."},
-        {"address": null, "symbol": "Meas_Current_mA", "data_type": "REAL", "native_unit": "mA", "role": "Converted IPPS current source candidate", "confidence": "strongly_inferred", "note": "Physical relationship is 1 V instrumentation = 1 mA; exported OPC UA symbol is TBD."}
-      ],
-      "notes": ["Do not select raw WORD versus converted REAL until the OPC UA Symbol Configuration is known."]
+        {"address": "%IW28", "symbol": "ai_IonPumpCurrent_Raw", "raw_symbol": null, "data_type": "WORD", "native_unit": "raw process image", "role": "Confirmed raw PLC source", "confidence": "confirmed", "note": "Do not finalize scaling without the 750-471 parameter page."},
+        {"address": null, "symbol": "ippsData.Meas_Current_mA", "raw_symbol": null, "data_type": "REAL", "native_unit": "mA", "role": "Confirmed processed PLC candidate", "confidence": "confirmed", "note": "OPC UA export status is unknown."}
+      ]
     },
     {
       "equipment": "ipps", "field": "interlock", "logical_signal": "interlock.ipps", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation", "polarity"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%QX57.0 / do_IntS_Auth_IPPS_Raw", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "ok", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Authorization output naming.", "note": "FALSE semantics require commissioning verification."},
-      "polarity": {"value": "TRUE = authorization granted", "confidence": "strongly_inferred", "provenance": "Authorization output naming."},
-      "candidates": [{"address": "%QX57.0", "symbol": "do_IntS_Auth_IPPS_Raw", "data_type": "BOOL", "role": "IPPS authorization/interlock condition", "confidence": "strongly_inferred", "note": "Candidate only."}]
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation", "polarity"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Outp.Auth_IPPS", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS authorization output."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = authorization granted; FALSE = authorization withheld", "confidence": "confirmed", "approved": true, "provenance": "Current logic is authorization = DoorsClosed."},
+      "polarity": {"value": "Active-high PLC authorization output", "confidence": "confirmed", "approved": true, "provenance": "Current PLC logic."},
+      "candidates": [{"address": "%QX57.0", "symbol": "gIntS_Outp.Auth_IPPS", "raw_symbol": "do_IntS_Auth_IPPS_Raw", "data_type": "BOOL", "role": "Current IPPS authorization output", "confidence": "confirmed", "note": "Production NodeId still requires discovery."}]
     },
-
     {
       "equipment": "arc_detector", "field": "state", "logical_signal": "alarm.arc_detector", "contract_kind": "alarm", "hmi_unit": null,
-      "physical_source_status": "selection_unresolved", "requirements": ["node_id", "type", "signal_selection", "interpretation", "polarity", "aggregation", "latching", "recovery", "severity"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "No single approved Arc Detector source exists."},
+      "physical_source_status": "needs_controls_verification", "requirements": ["node_id", "type", "interpretation", "polarity", "signal_selection", "aggregation", "latching", "recovery", "severity"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "No approved aggregate Arc Detector export exists."},
+      "plc_source": {"value": null, "confidence": "unknown", "provenance": "Candidate inputs are known, but the application's single aggregate source is unselected."},
+      "plc_type": {"value": "BOOL candidates", "confidence": "confirmed", "approved": true, "provenance": "Current digital input mappings."},
       "candidates": [
-        {"address": "%IX50.4", "symbol": null, "data_type": "BOOL", "role": "Generic Arc Alarm 1 candidate", "confidence": "strongly_inferred", "note": "Historical documentation suggests polarity may differ from Arc Alarm 2."},
-        {"address": "%IX50.5", "symbol": null, "data_type": "BOOL", "role": "Generic Arc Alarm 2 candidate", "confidence": "strongly_inferred", "note": "Historical documentation suggests polarity may differ from Arc Alarm 1."},
-        {"address": "%IX51.1", "symbol": null, "data_type": "BOOL", "role": "CPS Arc candidate", "confidence": "strongly_inferred", "note": "No approved aggregation rule."},
-        {"address": "%IX52.3", "symbol": null, "data_type": "BOOL", "role": "APS Arc candidate", "confidence": "strongly_inferred", "note": "No approved aggregation rule."}
+        {"address": "%IX50.4", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "Generic Arc Alarm 1; raw TRUE = healthy/OK", "confidence": "confirmed", "note": "Confirmed source polarity; aggregate use remains unapproved."},
+        {"address": "%IX50.5", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "Generic Arc Alarm 2; raw FALSE = healthy/OK", "confidence": "confirmed", "note": "Current PLC normalization explicitly inverts this input; aggregate use remains unapproved."},
+        {"address": "%IX51.1", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "CPS Arc candidate", "confidence": "confirmed", "note": "Candidate only."},
+        {"address": "%IX52.3", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "APS Arc candidate", "confidence": "confirmed", "note": "Candidate only."}
       ],
-      "notes": ["Signal selection, aggregation, polarity, interpretation, latching, recovery semantics, and production severity are unresolved.", "Do not invent OR, AND, priority, reset, acknowledgement, or latching behavior."]
+      "notes": ["Signal selection, aggregation, aggregate polarity, latching, recovery semantics and production severity remain unresolved; do not invent OR/AND logic."]
     },
-
     {
       "equipment": "ahvps", "field": "state", "logical_signal": "ahvps.state", "contract_kind": "state", "hmi_unit": null,
-      "physical_source_status": "selection_unresolved", "requirements": ["node_id", "type", "signal_selection", "interpretation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "Overall versus derived state selection is unresolved."},
-      "plc_type": {"value": "BOOL candidates", "confidence": "strongly_inferred", "provenance": "Recovered WAGO I/O mapping."},
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Inp.APS_On", "confidence": "confirmed", "approved": true, "provenance": "Current direct APS/Anode Power Supply state source."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = Anode Power Supply ON; FALSE = OFF", "confidence": "confirmed", "approved": true, "provenance": "Current PLC semantics."},
       "candidates": [
-        {"address": "%IX50.1", "symbol": null, "data_type": "BOOL", "role": "Primary APS overall-state candidate", "confidence": "strongly_inferred", "note": "AHVPS-to-APS equivalence and semantics require approval."},
-        {"address": "%IX52.0", "symbol": null, "data_type": "BOOL", "role": "APS ready supporting candidate", "confidence": "strongly_inferred", "note": "Supporting context only."},
-        {"address": "%IX52.1", "symbol": null, "data_type": "BOOL", "role": "APS rectifier supporting candidate", "confidence": "strongly_inferred", "note": "Supporting context only."},
-        {"address": "%IX51.7", "symbol": null, "data_type": "BOOL", "role": "APS charge supporting candidate", "confidence": "strongly_inferred", "note": "Supporting context only."}
-      ],
-      "notes": ["Historical terminology suggests AHVPS corresponds to APS/anode supply; explicit commissioning approval is required."]
+        {"address": "%IX50.1", "symbol": "gIntS_Inp.APS_On", "raw_symbol": "di_IntS_APS_On_Raw", "data_type": "BOOL", "role": "Direct confirmed AHVPS state source", "confidence": "confirmed", "note": "Use the direct source; do not derive overall state."},
+        {"address": "%IX52.0", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "APS Ready supporting context", "confidence": "confirmed", "note": "Supporting signal only."},
+        {"address": "%IX52.1", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "APS Rectifier supporting context", "confidence": "confirmed", "note": "Supporting signal only."},
+        {"address": "%IX51.7", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "APS Charge supporting context", "confidence": "confirmed", "note": "Supporting signal only."}
+      ]
     },
     {
       "equipment": "ahvps", "field": "voltage", "logical_signal": "ahvps.voltage", "contract_kind": "readback", "hmi_unit": "kV",
-      "physical_source_status": "not_recovered", "requirements": ["node_id", "type", "conversion", "range"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "No WAGO/CODESYS actual-voltage input has been recovered."},
-      "candidates": [{"address": "%QW27", "symbol": null, "data_type": "WORD", "role": "Command-side APS voltage setpoint context only", "confidence": "confirmed", "note": "FORBIDDEN as ahvps.voltage actual readback."}],
-      "notes": ["%QW27 is a setpoint output and must never be used as actual voltage.", "Historical +2 to +20 kV information is reference context only, not an approved range."]
+      "physical_source_status": "missing_physical_source", "requirements": ["node_id", "type", "conversion", "range"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Current WAGO acquisition map contains no actual anode-voltage input."},
+      "candidates": [{"address": "%QW27", "symbol": null, "raw_symbol": null, "data_type": "WORD", "role": "ANODE VOLTAGE SETPOINT command context only", "confidence": "confirmed", "note": "FORBIDDEN as ahvps.voltage actual readback."}],
+      "notes": ["Historical OCS actual-voltage acquisition does not establish a current source or approved range."]
     },
     {
       "equipment": "ahvps", "field": "protection", "logical_signal": "ahvps.protection", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "selection_unresolved", "requirements": ["node_id", "type", "signal_selection", "interpretation", "polarity", "aggregation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "Aggregate versus underlying protection selection is unresolved."},
-      "plc_type": {"value": "BOOL candidates", "confidence": "strongly_inferred", "provenance": "Recovered WAGO I/O mapping."},
+      "physical_source_status": "needs_controls_verification", "requirements": ["node_id", "current_fb_verification"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "PLC_PRG.fbAPS.StatusFault", "confidence": "strongly_inferred", "approved": false, "provenance": "Available baseline FB suggests this aggregate, but the exact current FB_HVPS_Channel source is unavailable."},
+      "current_fb_verification": {"value": null, "confidence": "unknown", "provenance": "Current FB_HVPS_Channel implementation must be obtained and verified."},
       "candidates": [
-        {"address": "%IX52.2", "symbol": null, "data_type": "BOOL", "role": "APS internal protection candidate", "confidence": "strongly_inferred", "note": "Underlying input."},
-        {"address": "%IX51.5", "symbol": null, "data_type": "BOOL", "role": "APS overcurrent candidate", "confidence": "strongly_inferred", "note": "Underlying input."},
-        {"address": "%IX51.6", "symbol": null, "data_type": "BOOL", "role": "APS overvoltage candidate", "confidence": "strongly_inferred", "note": "Underlying input."},
-        {"address": "%IX52.3", "symbol": null, "data_type": "BOOL", "role": "APS arc candidate", "confidence": "strongly_inferred", "note": "Underlying input."},
-        {"address": null, "symbol": "fbAPS.StatusFault", "data_type": "BOOL", "role": "Possible CODESYS aggregate", "confidence": "strongly_inferred", "note": "Do not select without confirmed production semantics."}
-      ]
+        {"address": null, "symbol": "PLC_PRG.fbAPS.StatusFault", "raw_symbol": null, "data_type": "BOOL", "role": "Likely aggregate protection candidate", "confidence": "strongly_inferred", "note": "Do not promote until current FB_HVPS_Channel is verified."},
+        {"address": "%IX52.2", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "APS internal protection input", "confidence": "confirmed", "note": "Likely aggregate input."},
+        {"address": "%IX51.5", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "APS overcurrent input", "confidence": "confirmed", "note": "Likely aggregate input."},
+        {"address": "%IX51.6", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "APS overvoltage input", "confidence": "confirmed", "note": "Likely aggregate input."},
+        {"address": "%IX52.3", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "APS arc input", "confidence": "confirmed", "note": "Likely aggregate input."}
+      ],
+      "notes": ["Available baseline function block indicates an OR of the four faults, but the exact current formula remains unconfirmed."]
     },
     {
       "equipment": "ahvps", "field": "interlock", "logical_signal": "interlock.ahvps", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation", "polarity"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%QX56.1 / Auth_APS", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "ok", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Authorization output naming.", "note": "FALSE semantics require commissioning verification."},
-      "polarity": {"value": "TRUE = authorization granted", "confidence": "strongly_inferred", "provenance": "Authorization output naming."},
-      "candidates": [{"address": "%QX56.1", "symbol": "Auth_APS", "data_type": "BOOL", "role": "AHVPS/APS authorization candidate", "confidence": "strongly_inferred", "note": "Candidate only."}]
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation", "polarity"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Outp.Auth_APS", "confidence": "confirmed", "approved": true, "provenance": "Current APS/anode authorization output."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = APS/anode authorization granted; FALSE = withheld", "confidence": "confirmed", "approved": true, "provenance": "Current PLC semantics."},
+      "polarity": {"value": "Active-high PLC authorization output", "confidence": "confirmed", "approved": true, "provenance": "Current PLC logic."},
+      "candidates": [{"address": "%QX56.1", "symbol": "gIntS_Outp.Auth_APS", "raw_symbol": "do_IntS_Auth_APS_Raw", "data_type": "BOOL", "role": "Current AHVPS/APS authorization output", "confidence": "confirmed", "note": "Production NodeId still requires discovery."}]
     },
-
     {
       "equipment": "chvps", "field": "state", "logical_signal": "chvps.state", "contract_kind": "state", "hmi_unit": null,
-      "physical_source_status": "selection_unresolved", "requirements": ["node_id", "type", "signal_selection", "interpretation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "Overall versus derived state selection is unresolved."},
-      "plc_type": {"value": "BOOL candidates", "confidence": "strongly_inferred", "provenance": "Recovered WAGO I/O mapping."},
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Inp.CPS_On", "confidence": "confirmed", "approved": true, "provenance": "Current direct CPS/Cathode Power Supply state source."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = Cathode Power Supply ON; FALSE = OFF", "confidence": "confirmed", "approved": true, "provenance": "Current PLC semantics."},
       "candidates": [
-        {"address": "%IX50.0", "symbol": null, "data_type": "BOOL", "role": "Primary CPS overall-state candidate", "confidence": "strongly_inferred", "note": "CHVPS-to-CPS equivalence and semantics require approval."},
-        {"address": "%IX50.6", "symbol": null, "data_type": "BOOL", "role": "CPS ready supporting candidate", "confidence": "strongly_inferred", "note": "Supporting context only."},
-        {"address": "%IX50.7", "symbol": null, "data_type": "BOOL", "role": "CPS rectifier supporting candidate", "confidence": "strongly_inferred", "note": "Supporting context only."},
-        {"address": "%IX51.4", "symbol": null, "data_type": "BOOL", "role": "CPS charge supporting candidate", "confidence": "strongly_inferred", "note": "Supporting context only."}
-      ],
-      "notes": ["Historical terminology suggests CHVPS corresponds to CPS/cathode supply; explicit commissioning approval is required."]
-    },
-    {
-      "equipment": "chvps", "field": "voltage", "logical_signal": "chvps.voltage", "contract_kind": "readback", "hmi_unit": "kV",
-      "physical_source_status": "not_recovered", "requirements": ["node_id", "type", "conversion", "range", "polarity"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "No WAGO/CODESYS actual-voltage input has been recovered."},
-      "candidates": [{"address": "%QW24", "symbol": null, "data_type": "WORD", "role": "Command-side CPS voltage setpoint context only", "confidence": "confirmed", "note": "FORBIDDEN as chvps.voltage actual readback."}],
-      "notes": ["%QW24 is a setpoint output and must never be used as actual voltage.", "Historical 20-40 kV magnitude and negative physical polarity are reference context only; HMI sign convention remains unresolved."]
-    },
-    {
-      "equipment": "chvps", "field": "protection", "logical_signal": "chvps.protection", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "selection_unresolved", "requirements": ["node_id", "type", "signal_selection", "interpretation", "polarity", "aggregation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "Aggregate versus underlying protection selection is unresolved."},
-      "plc_type": {"value": "BOOL candidates", "confidence": "strongly_inferred", "provenance": "Recovered WAGO I/O mapping."},
-      "candidates": [
-        {"address": "%IX51.0", "symbol": null, "data_type": "BOOL", "role": "CPS internal protection candidate", "confidence": "strongly_inferred", "note": "Underlying input."},
-        {"address": "%IX51.2", "symbol": null, "data_type": "BOOL", "role": "CPS overcurrent candidate", "confidence": "strongly_inferred", "note": "Underlying input."},
-        {"address": "%IX51.3", "symbol": null, "data_type": "BOOL", "role": "CPS overvoltage candidate", "confidence": "strongly_inferred", "note": "Underlying input."},
-        {"address": "%IX51.1", "symbol": null, "data_type": "BOOL", "role": "CPS arc candidate", "confidence": "strongly_inferred", "note": "Underlying input."},
-        {"address": null, "symbol": "fbCPS.StatusFault", "data_type": "BOOL", "role": "Possible CODESYS aggregate", "confidence": "strongly_inferred", "note": "Do not select without confirmed production semantics."}
+        {"address": "%IX50.0", "symbol": "gIntS_Inp.CPS_On", "raw_symbol": "di_IntS_CPS_On_Raw", "data_type": "BOOL", "role": "Direct confirmed CHVPS state source", "confidence": "confirmed", "note": "Use the direct source; do not derive overall state."},
+        {"address": "%IX50.6", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "CPS Ready supporting context", "confidence": "confirmed", "note": "Supporting signal only."},
+        {"address": "%IX50.7", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "CPS Rectifier supporting context", "confidence": "confirmed", "note": "Supporting signal only."},
+        {"address": "%IX51.4", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "CPS Charge supporting context", "confidence": "confirmed", "note": "Supporting signal only."}
       ]
     },
     {
-      "equipment": "chvps", "field": "interlock", "logical_signal": "interlock.chvps", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "candidate_available", "requirements": ["node_id", "type", "interpretation", "polarity"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "OPC UA Symbol Configuration not inspected."},
-      "plc_source": {"value": "%QX56.2 / Auth_CPS", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "plc_type": {"value": "BOOL", "confidence": "strongly_inferred", "provenance": "Current CODESYS WAGO I/O mapping."},
-      "interpretation": {"value": {"true": "ok", "false": "unresolved"}, "confidence": "strongly_inferred", "provenance": "Authorization output naming.", "note": "FALSE semantics require commissioning verification."},
-      "polarity": {"value": "TRUE = authorization granted", "confidence": "strongly_inferred", "provenance": "Authorization output naming."},
-      "candidates": [{"address": "%QX56.2", "symbol": "Auth_CPS", "data_type": "BOOL", "role": "CHVPS/CPS authorization candidate", "confidence": "strongly_inferred", "note": "Candidate only."}]
+      "equipment": "chvps", "field": "voltage", "logical_signal": "chvps.voltage", "contract_kind": "readback", "hmi_unit": "kV",
+      "physical_source_status": "missing_physical_source", "requirements": ["node_id", "type", "conversion", "range", "polarity"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Current WAGO acquisition map contains no actual cathode-voltage input."},
+      "candidates": [{"address": "%QW24", "symbol": null, "raw_symbol": null, "data_type": "WORD", "role": "CATHODE VOLTAGE SETPOINT command context only", "confidence": "confirmed", "note": "FORBIDDEN as chvps.voltage actual readback."}],
+      "notes": ["Historical OCS acquisition does not establish a current source.", "Historical physical cathode polarity was negative; the HMI sign convention remains unresolved."]
     },
-
+    {
+      "equipment": "chvps", "field": "protection", "logical_signal": "chvps.protection", "contract_kind": "condition", "hmi_unit": null,
+      "physical_source_status": "needs_controls_verification", "requirements": ["node_id", "current_fb_verification"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "PLC_PRG.fbCPS.StatusFault", "confidence": "strongly_inferred", "approved": false, "provenance": "Available baseline FB suggests this aggregate, but the exact current FB_HVPS_Channel source is unavailable."},
+      "current_fb_verification": {"value": null, "confidence": "unknown", "provenance": "Current FB_HVPS_Channel implementation must be obtained and verified."},
+      "candidates": [
+        {"address": null, "symbol": "PLC_PRG.fbCPS.StatusFault", "raw_symbol": null, "data_type": "BOOL", "role": "Likely aggregate protection candidate", "confidence": "strongly_inferred", "note": "Do not promote until current FB_HVPS_Channel is verified."},
+        {"address": "%IX51.0", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "CPS internal protection input", "confidence": "confirmed", "note": "Likely aggregate input."},
+        {"address": "%IX51.2", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "CPS overcurrent input", "confidence": "confirmed", "note": "Likely aggregate input."},
+        {"address": "%IX51.3", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "CPS overvoltage input", "confidence": "confirmed", "note": "Likely aggregate input."},
+        {"address": "%IX51.1", "symbol": null, "raw_symbol": null, "data_type": "BOOL", "role": "CPS arc input", "confidence": "confirmed", "note": "Likely aggregate input."}
+      ],
+      "notes": ["Available baseline function block indicates an OR of the four faults, but the exact current formula remains unconfirmed."]
+    },
+    {
+      "equipment": "chvps", "field": "interlock", "logical_signal": "interlock.chvps", "contract_kind": "condition", "hmi_unit": null,
+      "physical_source_status": "plc_source_confirmed", "requirements": ["node_id", "type", "interpretation", "polarity"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "Production OPC UA Symbol Configuration has not been obtained."},
+      "plc_source": {"value": "gIntS_Outp.Auth_CPS", "confidence": "confirmed", "approved": true, "provenance": "Current CPS/cathode authorization output."},
+      "plc_type": {"value": "BOOL", "confidence": "confirmed", "approved": true, "provenance": "Current CODESYS declaration."},
+      "interpretation": {"value": "TRUE = CPS/cathode authorization granted; FALSE = withheld", "confidence": "confirmed", "approved": true, "provenance": "Current PLC semantics."},
+      "polarity": {"value": "Active-high PLC authorization output", "confidence": "confirmed", "approved": true, "provenance": "Current PLC logic."},
+      "candidates": [{"address": "%QX56.2", "symbol": "gIntS_Outp.Auth_CPS", "raw_symbol": "do_IntS_Auth_CPS_Raw", "data_type": "BOOL", "role": "Current CHVPS/CPS authorization output", "confidence": "confirmed", "note": "Production NodeId still requires discovery."}]
+    },
     {
       "equipment": "pulse_generator", "field": "state", "logical_signal": "pulse_generator.state", "contract_kind": "state", "hmi_unit": null,
-      "physical_source_status": "not_recovered", "requirements": ["node_id", "type", "interpretation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "No authoritative CODESYS state source has been recovered."},
-      "notes": ["Historical generator is an Agilent 33521A; current production PLC integration is incomplete or unknown."]
+      "physical_source_status": "missing_physical_source", "requirements": ["node_id", "type", "interpretation"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "No current authoritative PLC state source was found."},
+      "notes": ["Historical Agilent 33521A use does not establish current PLC integration."]
     },
     {
       "equipment": "pulse_generator", "field": "feedback", "logical_signal": "pulse_generator.feedback", "contract_kind": "condition", "hmi_unit": null,
-      "physical_source_status": "not_recovered", "requirements": ["node_id", "type", "interpretation"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "No authoritative CODESYS feedback source has been recovered."}
+      "physical_source_status": "missing_physical_source", "requirements": ["node_id", "type", "interpretation"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "No current authoritative PLC feedback source was found."},
+      "notes": ["Historical Agilent 33521A use does not establish current PLC integration."]
     },
     {
       "equipment": "pulse_generator", "field": "pulse_length", "logical_signal": "pulse_generator.length", "contract_kind": "readback", "hmi_unit": "ms",
-      "physical_source_status": "not_recovered", "requirements": ["node_id", "type", "conversion", "range"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "No actual pulse-length readback source has been recovered."},
-      "candidates": [{"address": "%QW26", "symbol": null, "data_type": "WORD", "role": "Command-side pulse-duration preset context only", "confidence": "confirmed", "note": "FORBIDDEN as pulse_generator.length actual readback."}],
-      "notes": ["%QW26 is a preset output, not an actual pulse-length readback."]
+      "physical_source_status": "missing_physical_source", "requirements": ["node_id", "type", "conversion", "range"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "No current actual pulse-length readback source was found."},
+      "candidates": [{"address": "%QW26", "symbol": null, "raw_symbol": null, "data_type": "WORD", "role": "Pulse-duration PRESET command-side context only", "confidence": "confirmed", "note": "FORBIDDEN as pulse_generator.length actual readback."}],
+      "notes": ["Historical Agilent 33521A use does not establish current PLC integration."]
     },
     {
       "equipment": "pulse_generator", "field": "pulse_period", "logical_signal": "pulse_generator.period", "contract_kind": "readback", "hmi_unit": "s",
-      "physical_source_status": "not_recovered", "requirements": ["node_id", "type", "conversion", "range"],
-      "node_id": {"value": null, "confidence": "unknown", "provenance": "No actual pulse-period source has been recovered."}
+      "physical_source_status": "missing_physical_source", "requirements": ["node_id", "type", "conversion", "range"],
+      "node_id": {"value": null, "confidence": "unknown", "provenance": "No current actual pulse-period source was found."},
+      "notes": ["Historical Agilent 33521A use does not establish current PLC integration."]
     }
   ]
 }
