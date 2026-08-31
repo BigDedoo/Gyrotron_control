@@ -6,7 +6,8 @@ import TrendPanel from '@/components/hmi/TrendPanel.vue'
 import AdminView from '@/views/AdminView.vue'
 import LogsView from '@/views/LogsView.vue'
 import { formatTimestamp, stateLabel } from '@/lib/hmi'
-import type { CommandCapability, DataState, StateSignalValue, SystemStatus, TelemetryPoint, UserRole } from '@/api/types'
+import { api } from '@/api/client'
+import type { CommandCapability, DataState, OPCUADiagnosticsResponse, OPCUASignalDiagnostic, StateSignalValue, SystemStatus, TelemetryPoint, UserRole } from '@/api/types'
 
 const props = defineProps<{
   status: SystemStatus | null
@@ -17,16 +18,40 @@ const props = defineProps<{
   role: UserRole
 }>()
 
-type Section = 'events' | 'signals' | 'trends' | 'system' | 'admin'
+type Section = 'events' | 'signals' | 'opcua' | 'trends' | 'system' | 'admin'
 const section = ref<Section>('events')
 const sections = computed(() => [
   { key: 'events' as const, label: 'Event history', icon: FileClock },
   { key: 'signals' as const, label: 'Signal diagnostics', icon: Activity },
+  { key: 'opcua' as const, label: 'OPC UA commissioning', icon: Database },
   { key: 'trends' as const, label: 'Detailed trends', icon: ChartNoAxesCombined },
   { key: 'system' as const, label: 'Backend & capabilities', icon: Network },
   ...(props.role === 'admin' ? [{ key: 'admin' as const, label: 'Administration', icon: Users }] : [])
 ])
 watch(() => props.role, (role) => { if (role !== 'admin' && section.value === 'admin') section.value = 'events' })
+
+const opcua = ref<OPCUADiagnosticsResponse | null>(null)
+const opcuaError = ref('')
+const opcuaLoading = ref(false)
+let opcuaRequest: AbortController | null = null
+
+async function loadOpcuaDiagnostics() {
+  opcuaRequest?.abort()
+  opcuaRequest = new AbortController()
+  opcuaLoading.value = true
+  opcuaError.value = ''
+  try {
+    opcua.value = await api.getOpcuaDiagnostics(opcuaRequest.signal)
+  } catch (error) {
+    if ((error as Error).name !== 'AbortError') opcuaError.value = 'OPC UA diagnostics unavailable.'
+  } finally {
+    opcuaLoading.value = false
+  }
+}
+
+watch([() => props.active, section], ([active, selected]) => {
+  if (active && selected === 'opcua') void loadOpcuaDiagnostics()
+}, { immediate: true })
 
 const signals = computed(() => {
   const unique = new Map<string, StateSignalValue>()
@@ -43,6 +68,16 @@ const signals = computed(() => {
 
 function raw(value: boolean | number | null) {
   return value === null ? '—' : String(value)
+}
+
+function diagnosticsMode(value?: OPCUADiagnosticsResponse['environment']) {
+  if (value === 'local_opcua_test') return 'LOCAL OPC UA TEST'
+  if (value === 'production_opcua') return 'PRODUCTION OPC UA'
+  return 'SIMULATION'
+}
+
+function age(signal: OPCUASignalDiagnostic) {
+  return signal.age_seconds === null ? '—' : `${signal.age_seconds.toFixed(1)} s`
 }
 </script>
 
@@ -86,6 +121,60 @@ function raw(value: boolean | number | null) {
               <td class="px-3 py-2 whitespace-nowrap text-slate-500">{{ formatTimestamp(signal.observed_at) }}</td>
             </tr>
             <tr v-if="!signals.length"><td colspan="8" class="px-3 py-8 text-center text-slate-500">Signal diagnostics unavailable.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section v-else-if="section === 'opcua'" class="rounded-lg border bg-white shadow-sm">
+      <div class="flex items-center justify-between gap-3 border-b px-4 py-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-bold text-slate-800">OPC UA commissioning diagnostics</h2>
+            <StatusPill :state="opcua?.environment === 'production_opcua' ? 'warning' : 'simulation'" :label="diagnosticsMode(opcua?.environment)" />
+          </div>
+          <p class="mt-1 text-[11px] text-slate-400">Managed backend read state only; this view cannot connect, scan, or write.</p>
+        </div>
+        <button class="rounded border px-3 py-1.5 text-[10px] font-bold uppercase text-slate-600 hover:bg-slate-50" :disabled="opcuaLoading" @click="loadOpcuaDiagnostics">
+          {{ opcuaLoading ? 'Loading…' : 'Refresh' }}
+        </button>
+      </div>
+      <div class="grid grid-cols-1 gap-px border-b bg-slate-200 text-[10px] sm:grid-cols-3">
+        <div class="bg-slate-50 px-3 py-2"><span class="text-slate-400">Telemetry</span><div class="font-bold">{{ opcua?.telemetry_capability === 'simulated' ? 'SIMULATED' : 'AVAILABLE / CONFIG-DEPENDENT' }}</div></div>
+        <div class="bg-slate-50 px-3 py-2"><span class="text-slate-400">PLC commands</span><div class="font-bold text-slate-700">UNSUPPORTED / DISABLED</div></div>
+        <div class="bg-slate-50 px-3 py-2"><span class="text-slate-400">Connection</span><div class="font-bold">{{ stateLabel(opcua?.connection_state) }}</div></div>
+      </div>
+      <div v-if="opcuaError" class="p-4 text-xs text-red-700">{{ opcuaError }}</div>
+      <div v-else-if="opcua?.environment === 'simulation'" class="p-6 text-center text-xs text-slate-500">
+        Normal application simulation is active. No TestOnly NodeIds are presented as production mappings.
+      </div>
+      <div v-else class="max-h-[66vh] overflow-auto">
+        <table class="w-full text-left text-[10px]">
+          <thead class="sticky top-0 bg-slate-100 text-[9px] uppercase tracking-wide text-slate-500">
+            <tr><th class="px-3 py-2">Equipment / field</th><th class="px-3 py-2">Value</th><th class="px-3 py-2">Quality</th><th class="px-3 py-2">Age</th><th class="px-3 py-2">Node status</th><th class="px-3 py-2">Connection</th><th class="px-3 py-2">Last error</th></tr>
+          </thead>
+          <tbody class="divide-y">
+            <tr v-for="signal in opcua?.signals ?? []" :key="signal.logical_field" class="align-top hover:bg-slate-50">
+              <td class="px-3 py-2">
+                <div class="font-semibold text-slate-700">{{ signal.equipment }} · {{ signal.logical_field }}</div>
+                <details class="mt-1 max-w-xl text-[9px] text-slate-500">
+                  <summary class="cursor-pointer select-none text-slate-400">Mapping details</summary>
+                  <dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 rounded bg-slate-50 p-2 font-mono">
+                    <dt>NodeId</dt><dd class="break-all">{{ signal.node_id }}</dd>
+                    <dt>Datatype</dt><dd>{{ signal.expected_datatype }} expected / {{ signal.observed_datatype ?? 'unknown' }} observed</dd>
+                    <dt>Source</dt><dd>{{ formatTimestamp(signal.source_timestamp) }}</dd>
+                    <dt>Observed</dt><dd>{{ formatTimestamp(signal.backend_observed_at) }}</dd>
+                    <dt>Conversion</dt><dd>{{ signal.scale === null ? 'not applicable' : `scale ${signal.scale}, offset ${signal.offset}` }}</dd>
+                  </dl>
+                </details>
+              </td>
+              <td class="px-3 py-2 font-mono">{{ signal.converted_value ?? signal.raw_value ?? '—' }}</td>
+              <td class="px-3 py-2"><StatusPill :state="signal.quality" :label="stateLabel(signal.quality)" /></td>
+              <td class="whitespace-nowrap px-3 py-2">{{ age(signal) }}</td>
+              <td class="px-3 py-2"><StatusPill :state="signal.mapping_status" :label="stateLabel(signal.mapping_status)" /></td>
+              <td class="px-3 py-2">{{ stateLabel(signal.connection_state) }}</td>
+              <td class="max-w-52 px-3 py-2 text-slate-500">{{ signal.last_error ?? '—' }}</td>
+            </tr>
           </tbody>
         </table>
       </div>

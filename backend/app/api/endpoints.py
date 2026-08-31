@@ -25,6 +25,7 @@ from app.events.store import EventStore, EventStoreUnavailable
 from app.models import (
     AlarmSeverity,
     AppMode,
+    ConnectionState,
     DataState,
     LoginRequest,
     MessageResponse,
@@ -38,6 +39,7 @@ from app.models import (
     UsersResponse,
 )
 from app.simulation import simulation_telemetry
+from app.opcua.diagnostics import OPCUADiagnosticsResponse, build_diagnostics
 
 
 router = APIRouter(prefix="/api")
@@ -290,6 +292,36 @@ def get_command_capabilities(
     _: ApplicationSession = Depends(get_current_session),
 ) -> CommandCapabilitiesResponse:
     return phase4_capabilities()
+
+
+@router.get("/opcua-diagnostics", response_model=OPCUADiagnosticsResponse)
+def get_opcua_diagnostics(
+    request: Request,
+    _: ApplicationSession = Depends(get_current_session),
+) -> OPCUADiagnosticsResponse:
+    """Report already-managed read state; never connects, scans, or writes."""
+    settings = getattr(request.app.state, "settings", get_settings())
+    monitor = getattr(request.app.state, "opcua_monitor", None)
+    if settings.app_mode == AppMode.SIMULATION:
+        return build_diagnostics(
+            endpoint_url=None,
+            node_map=None,
+            observations=None,
+            connection_state=getattr(monitor, "connection_state", None)
+            or ConnectionState.SIMULATED,
+            last_successful_read=None,
+            last_error=None,
+        )
+    if monitor is None:
+        return build_diagnostics(
+            endpoint_url=settings.opcua.endpoint_url if settings.opcua else None,
+            node_map=None,
+            observations=None,
+            connection_state=ConnectionState.DISCONNECTED,
+            last_successful_read=None,
+            last_error="OPC UA monitor is unavailable",
+        )
+    return monitor.diagnostics()
 
 
 @router.get("/telemetry", response_model=TelemetryPoint)

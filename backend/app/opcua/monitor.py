@@ -17,6 +17,7 @@ from app.models import (
     TelemetryPoint,
 )
 from app.opcua.client import OPCUAClientError, ReadOnlyOPCUAClient
+from app.opcua.diagnostics import OPCUADiagnosticsResponse, build_diagnostics
 from app.opcua.node_map import (
     REQUIRED_SIGNALS,
     LogicalStateSignal,
@@ -90,6 +91,16 @@ class OPCUAMonitor:
             error=self._error,
         )
 
+    def diagnostics(self) -> OPCUADiagnosticsResponse:
+        return build_diagnostics(
+            endpoint_url=self.settings.endpoint_url,
+            node_map=self.node_map,
+            observations=self.client.diagnostics_snapshot(),
+            connection_state=self._connection_state,
+            last_successful_read=self._last_successful_read,
+            last_error=self._error,
+        )
+
     def _data_state(self) -> DataState:
         snapshot = self._snapshot
         if snapshot is None or self._last_successful_read is None:
@@ -97,6 +108,13 @@ class OPCUAMonitor:
         age = (datetime.now(timezone.utc) - self._last_successful_read).total_seconds()
         if age > self.settings.stale_after_seconds:
             return DataState.UNAVAILABLE
+        stale_source_observed = any(
+            sample.source_timestamp_stale
+            for sample in self.client.diagnostics_snapshot().values()
+            if sample.quality in {SignalQuality.GOOD, SignalQuality.UNCERTAIN}
+        )
+        if stale_source_observed:
+            return DataState.STALE
         snapshot_predates_connection = (
             self._last_connection_attempt is not None
             and self._last_successful_read < self._last_connection_attempt

@@ -27,6 +27,7 @@ from app.opcua.node_map import (
     StateExpectedType,
     StateNodeMapping,
 )
+from app.opcua.diagnostics import OPCUAReadDiagnostic
 
 
 logger = logging.getLogger(__name__)
@@ -62,11 +63,29 @@ def _source_timestamp(value: datetime | None) -> datetime | None:
 def _quality(status_code: Any) -> SignalQuality:
     if status_code is None:
         return SignalQuality.UNAVAILABLE
+    if getattr(status_code, "value", None) == ua.StatusCodes.BadNodeIdUnknown:
+        return SignalQuality.UNAVAILABLE
     if status_code.is_good():
         return SignalQuality.GOOD
     if status_code.is_uncertain():
         return SignalQuality.UNCERTAIN
     return SignalQuality.BAD
+
+
+def _observed_datatype(data_value: Any) -> str | None:
+    variant = getattr(data_value, "Value", None)
+    variant_type = getattr(variant, "VariantType", None)
+    return getattr(variant_type, "name", None) or (
+        type(getattr(variant, "Value", None)).__name__ if variant is not None else None
+    )
+
+
+def _diagnostic_raw(raw: Any) -> Any:
+    if isinstance(raw, float) and not math.isfinite(raw):
+        if math.isnan(raw):
+            return "NaN"
+        return "+Inf" if raw > 0 else "-Inf"
+    return raw
 
 
 def _normalize_value(raw: Any, mapping: NodeMapping) -> float:
@@ -131,10 +150,49 @@ class ReadOnlyOPCUAClient:
         self._client: Client | None = None
         self.connection_state = ConnectionState.DISCONNECTED
         self._lifecycle_lock = asyncio.Lock()
+        self._diagnostics: dict[str, OPCUAReadDiagnostic] = {}
+        self._source_timestamp_seen_fresh: dict[str, bool] = {}
 
     @property
     def connected(self) -> bool:
         return self.connection_state == ConnectionState.CONNECTED and self._client is not None
+
+    def diagnostics_snapshot(self) -> dict[str, OPCUAReadDiagnostic]:
+        return {
+            name: diagnostic.model_copy(deep=True)
+            for name, diagnostic in self._diagnostics.items()
+        }
+
+    def _source_timestamp_stale(
+        self,
+        logical_name: str,
+        source_timestamp: datetime | None,
+        observed_at: datetime,
+    ) -> bool:
+        if source_timestamp is None:
+            return False
+        age = max(0.0, (observed_at - source_timestamp).total_seconds())
+        if age <= self.settings.stale_after_seconds:
+            self._source_timestamp_seen_fresh[logical_name] = True
+            return False
+        return not self._source_timestamp_seen_fresh.get(logical_name, False)
+
+    def _record_unavailable(
+        self,
+        logical_name: str,
+        error: str,
+        observed_at: datetime | None = None,
+    ) -> None:
+        previous = self._diagnostics.get(logical_name)
+        if previous is None:
+            self._diagnostics[logical_name] = OPCUAReadDiagnostic(
+                observed_at=observed_at,
+                last_error=error,
+            )
+            return
+        self._diagnostics[logical_name] = previous.model_copy(
+            update={"quality": SignalQuality.UNAVAILABLE, "last_error": error}
+        )
 
     async def connect(self) -> None:
         async with self._lifecycle_lock:
@@ -216,11 +274,29 @@ class ReadOnlyOPCUAClient:
             )
             observed_at = datetime.now(timezone.utc)
         except Exception as exc:
+            self._record_unavailable(
+                mapping.signal.value,
+                f"Signal read failed: {type(exc).__name__}",
+                observed_at,
+            )
             raise OPCUAReadError("OPC UA signal read failed") from exc
 
         quality = _quality(data_value.StatusCode)
         timestamp = _source_timestamp(data_value.SourceTimestamp)
+        raw = data_value.Value.Value if data_value.Value is not None else None
+        observed_datatype = _observed_datatype(data_value)
         if quality in {SignalQuality.BAD, SignalQuality.UNAVAILABLE}:
+            self._diagnostics[mapping.signal.value] = OPCUAReadDiagnostic(
+                raw_value=_diagnostic_raw(raw),
+                observed_datatype=observed_datatype,
+                quality=quality,
+                source_timestamp=timestamp,
+                source_timestamp_stale=self._source_timestamp_stale(
+                    mapping.signal.value, timestamp, observed_at
+                ),
+                observed_at=observed_at,
+                last_error=f"OPC UA quality is {quality.value}",
+            )
             return SignalValue(
                 value=None,
                 unit=mapping.unit,
@@ -228,11 +304,20 @@ class ReadOnlyOPCUAClient:
                 source_timestamp=timestamp,
                 observed_at=observed_at,
             )
-
-        raw = data_value.Value.Value if data_value.Value is not None else None
         try:
             value = _normalize_value(raw, mapping)
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError, OverflowError) as exc:
+            self._diagnostics[mapping.signal.value] = OPCUAReadDiagnostic(
+                raw_value=_diagnostic_raw(raw),
+                observed_datatype=observed_datatype,
+                quality=SignalQuality.BAD,
+                source_timestamp=timestamp,
+                source_timestamp_stale=self._source_timestamp_stale(
+                    mapping.signal.value, timestamp, observed_at
+                ),
+                observed_at=observed_at,
+                last_error=f"Datatype/value validation failed: {exc}",
+            )
             return SignalValue(
                 value=None,
                 unit=mapping.unit,
@@ -240,6 +325,18 @@ class ReadOnlyOPCUAClient:
                 source_timestamp=timestamp,
                 observed_at=observed_at,
             )
+        self._diagnostics[mapping.signal.value] = OPCUAReadDiagnostic(
+            raw_value=_diagnostic_raw(raw),
+            converted_value=value,
+            observed_datatype=observed_datatype,
+            quality=quality,
+            source_timestamp=timestamp,
+            source_timestamp_stale=self._source_timestamp_stale(
+                mapping.signal.value, timestamp, observed_at
+            ),
+            observed_at=observed_at,
+            last_error=None,
+        )
         return SignalValue(
             value=value,
             unit=mapping.unit,
@@ -263,6 +360,10 @@ class ReadOnlyOPCUAClient:
         values: dict[LogicalSignal, SignalValue] = {}
         for mapping, result in zip(ordered, results, strict=True):
             if isinstance(result, Exception):
+                self._record_unavailable(
+                    mapping.signal.value,
+                    f"Signal unavailable: {type(result).__name__}",
+                )
                 values[mapping.signal] = SignalValue(
                     value=None,
                     unit=mapping.unit,
@@ -287,19 +388,46 @@ class ReadOnlyOPCUAClient:
             )
             observed_at = datetime.now(timezone.utc)
         except Exception as exc:
+            self._record_unavailable(
+                mapping.signal.value,
+                f"State signal read failed: {type(exc).__name__}",
+                observed_at,
+            )
             raise OPCUAReadError("OPC UA state signal read failed") from exc
 
         quality = _quality(data_value.StatusCode)
         timestamp = _source_timestamp(data_value.SourceTimestamp)
+        raw = data_value.Value.Value if data_value.Value is not None else None
+        observed_datatype = _observed_datatype(data_value)
         if quality in {SignalQuality.BAD, SignalQuality.UNAVAILABLE}:
+            self._diagnostics[mapping.signal.value] = OPCUAReadDiagnostic(
+                raw_value=_diagnostic_raw(raw),
+                observed_datatype=observed_datatype,
+                quality=quality,
+                source_timestamp=timestamp,
+                source_timestamp_stale=self._source_timestamp_stale(
+                    mapping.signal.value, timestamp, observed_at
+                ),
+                observed_at=observed_at,
+                last_error=f"OPC UA quality is {quality.value}",
+            )
             return _unavailable_state(mapping, observed_at).model_copy(
                 update={"quality": quality, "source_timestamp": timestamp}
             )
-
-        raw = data_value.Value.Value if data_value.Value is not None else None
         try:
             normalized = _normalize_state_value(raw, mapping)
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError, OverflowError) as exc:
+            self._diagnostics[mapping.signal.value] = OPCUAReadDiagnostic(
+                raw_value=_diagnostic_raw(raw),
+                observed_datatype=observed_datatype,
+                quality=SignalQuality.BAD,
+                source_timestamp=timestamp,
+                source_timestamp_stale=self._source_timestamp_stale(
+                    mapping.signal.value, timestamp, observed_at
+                ),
+                observed_at=observed_at,
+                last_error=f"Datatype/value validation failed: {exc}",
+            )
             return _unavailable_state(mapping, observed_at).model_copy(
                 update={
                     "quality": SignalQuality.BAD,
@@ -312,6 +440,18 @@ class ReadOnlyOPCUAClient:
             mapping.interpret(normalized)
             if quality == SignalQuality.GOOD
             else InterpretedState.UNKNOWN
+        )
+        self._diagnostics[mapping.signal.value] = OPCUAReadDiagnostic(
+            raw_value=_diagnostic_raw(raw),
+            converted_value=normalized,
+            observed_datatype=observed_datatype,
+            quality=quality,
+            source_timestamp=timestamp,
+            source_timestamp_stale=self._source_timestamp_stale(
+                mapping.signal.value, timestamp, observed_at
+            ),
+            observed_at=observed_at,
+            last_error=None,
         )
         return StateSignalValue(
             logical_name=mapping.signal.value,
@@ -344,6 +484,12 @@ class ReadOnlyOPCUAClient:
         observed_at = datetime.now(timezone.utc)
         values: dict[LogicalStateSignal, StateSignalValue] = {}
         for mapping, result in zip(ordered, results, strict=True):
+            if isinstance(result, Exception):
+                self._record_unavailable(
+                    mapping.signal.value,
+                    f"State signal unavailable: {type(result).__name__}",
+                    observed_at,
+                )
             values[mapping.signal] = (
                 _unavailable_state(mapping, observed_at)
                 if isinstance(result, Exception)

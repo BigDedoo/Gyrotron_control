@@ -220,3 +220,37 @@ export interface CommandCapabilitiesResponse {
   capabilities: CommandCapability[]
   execution_available: false
 }
+
+export type OPCUADiagnosticsEnvironment = 'simulation' | 'local_opcua_test' | 'production_opcua'
+export type OPCUAMappingStatus = 'ready' | 'degraded' | 'stale' | 'bad_quality' | 'type_mismatch' | 'unavailable' | 'not_observed'
+
+export interface OPCUASignalDiagnostic {
+  equipment: string
+  logical_field: string
+  node_id: string
+  expected_datatype: string
+  observed_datatype: string | null
+  raw_value: boolean | number | string | null
+  converted_value: boolean | number | null
+  quality: SignalQuality
+  source_timestamp: string | null
+  backend_observed_at: string | null
+  age_seconds: number | null
+  connection_state: ConnectionState
+  last_successful_read: string | null
+  last_error: string | null
+  scale: number | null
+  offset: number | null
+  mapping_status: OPCUAMappingStatus
+}
+
+export interface OPCUADiagnosticsResponse {
+  environment: OPCUADiagnosticsEnvironment
+  telemetry_capability: 'simulated' | 'available_config_dependent'
+  plc_command_capability: 'unsupported_disabled'
+  read_only: true
+  connection_state: ConnectionState
+  last_successful_read: string | null
+  last_error: string | null
+  signals: OPCUASignalDiagnostic[]
+}

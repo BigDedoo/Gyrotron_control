@@ -3,6 +3,7 @@ import type {
   CommandCapabilitiesResponse,
   EventCategory,
   EventListResponse,
+  OPCUADiagnosticsResponse,
   SessionUser,
   SystemStatus,
   TelemetryPoint,
@@ -77,6 +78,8 @@ export const api = {
   },
   getCommandCapabilities: (signal?: AbortSignal): Promise<CommandCapabilitiesResponse> =>
     apiRequest('/command-capabilities', { signal }),
+  getOpcuaDiagnostics: (signal?: AbortSignal): Promise<OPCUADiagnosticsResponse> =>
+    apiRequest('/opcua-diagnostics', { signal }),
   getUsers: (): Promise<UserRecord[]> => apiRequest('/users'),
   addUser: (username: string, role: UserRole): Promise<UsersResponse> =>
     apiRequest('/users/add', { method: 'POST', body: JSON.stringify({ username, role }) }),

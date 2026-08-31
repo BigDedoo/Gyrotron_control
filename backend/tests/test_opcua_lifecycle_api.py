@@ -262,7 +262,13 @@ def test_readonly_boundary_exposes_no_write_capability(client, authenticate):
         "/api/alarms/acknowledge",
         "/api/alarm/ack",
     }
-    assert hardware_routes.isdisjoint({route.path for route in client.app.routes})
+    assert hardware_routes.isdisjoint(
+        {
+            path
+            for route in client.app.routes
+            if (path := getattr(route, "path", None)) is not None
+        }
+    )
 
     authenticate(True)
     response = client.post("/api/login", json={"username": "operator", "password": "valid"})
